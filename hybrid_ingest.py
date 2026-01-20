@@ -1,241 +1,213 @@
 import json
 import os
-import hashlib
-import re
-import torch
-from tqdm import tqdm
 from qdrant_client import QdrantClient
-from qdrant_client.http import models
+from qdrant_client.models import VectorParams, Distance, PointStruct, PayloadSchemaType
+from tqdm import tqdm
+import re
+from dotenv import load_dotenv
+import torch
 from sentence_transformers import SentenceTransformer
 
+load_dotenv()
+
 # --- KONFIGURACJA ---
-DATA_FILE = "data/clean_dataset.json"
-DB_PATH = "qdrant_db"
-COLLECTION_NAME = "polish_law_hybrid"
-MODEL_NAME = "sdadas/st-polish-paraphrase-from-distilroberta"
+DATA_PATH = "data/full_dataset.json"
+COLLECTION_NAME = "polish_law_e5"  # Nowa kolekcja dla nowego modelu
+MODEL_NAME = "intfloat/multilingual-e5-large"  # Lepszy model!
+VECTOR_SIZE = 1024  # E5-large ma 1024 wymiarów
 
-CHUNK_SIZE = 512      
-CHUNK_OVERLAP = 128   
-MIN_CHUNK_SIZE = 50   
+CHUNK_SIZE = 512
+CHUNK_OVERLAP = 128
+MIN_CHUNK_SIZE = 50
+BATCH_SIZE = 32  # Mniejszy batch dla większego modelu (VRAM)
 
+# Sprawdź GPU
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"🖥️ Używam: {DEVICE.upper()}")
 
 def clean_legal_text(text):
-    """Czyszczenie tekstu prawniczego."""
-    if not text: return ""
+    """Czyści tekst prawniczy."""
+    if not text:
+        return ""
     text = re.sub(r'\s+', ' ', text)
-    text = text.replace('(...)', '').replace('( ... )', '').replace('[]', '')
-    text = re.sub(r'\s([rRzZtT])\s\.', r' \1.', text)
-    text = re.sub(r'(art|sygn)\s\.', r'\1.', text)
+    text = re.sub(r'[^\w\s\.\,\;\:\-\(\)\[\]§„"\"\'\/\%\@\+\=\!\?\*\#]+', '', text)
     return text.strip()
 
-
-def find_safe_boundaries(text):
-    """
-    Znajduje bezpieczne miejsca do cięcia tekstu.
-    Zwraca listę pozycji gdzie można ciąć.
-    """
-    boundaries = [0]
-    
-    # Szukamy końców zdań: . ! ? + spacja + duża litera (min 2 znaki słowa)
-    for match in re.finditer(r'[.!?]\s+(?=[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ])', text):
-        pos = match.end()
-        before = text[max(0, match.start()-10):match.start()+1]
-        
-        # Pomiń jeśli to inicjał (pojedyncza litera przed kropką)
-        if re.search(r'\s[A-ZĄĆĘŁŃÓŚŹŻ]\.$', before):
-            continue
-        
-        # Pomiń jeśli to skrót
-        if re.search(r'(art|sygn|poz|ust|pkt|nr|r|z|k|s)\.$', before, re.IGNORECASE):
-            continue
-        
-        boundaries.append(pos)
-    
-    boundaries.append(len(text))
-    return sorted(set(boundaries))
-
-
 def smart_legal_chunker(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    """
-    Poprawiony chunker: zamiast usuwać małe fragmenty, dokleja je do poprzednich.
-    """
-    text = text.strip()
-    if not text:
-        return []
-        
-    # Szybka ścieżka dla krótkich tekstów
+    """Inteligentny podział na chunki."""
     if len(text) <= chunk_size:
-        return [{"text": text, "start_char": 0, "end_char": len(text)}]
+        return [text] if len(text) >= MIN_CHUNK_SIZE else []
     
-    boundaries = find_safe_boundaries(text)
-    
-    # Zabezpieczenie na wypadek braku granic
-    if len(boundaries) < 2:
-        boundaries = list(range(0, len(text), chunk_size)) + [len(text)]
-        boundaries = sorted(list(set(boundaries)))
-
     chunks = []
-    start_idx = 0
-    max_iterations = len(boundaries) * 3
-    iterations = 0
+    start = 0
     
-    while start_idx < len(boundaries) - 1 and iterations < max_iterations:
-        iterations += 1
+    while start < len(text):
+        end = start + chunk_size
         
-        chunk_start = boundaries[start_idx]
-        
-        # 1. Szukamy końca chunka
-        end_idx = start_idx + 1
-        for j in range(start_idx + 1, len(boundaries)):
-            if boundaries[j] - chunk_start <= chunk_size:
-                end_idx = j
-            else:
-                break
-        
-        chunk_end = boundaries[end_idx]
-        chunk_text = text[chunk_start:chunk_end].strip()
-        
-        # 2. LOGIKA NAPRAWCZA (MERGE)
-        # Jeśli chunk jest za mały...
-        if len(chunk_text) < MIN_CHUNK_SIZE:
-            # A) Jeśli mamy już jakieś chunki, doklej ten mały fragment do ostatniego
-            if chunks:
-                last_chunk = chunks[-1]
-                # Aktualizujemy tekst i pozycję końcową ostatniego chunka
-                new_end = chunk_end
-                # Pobieramy tekst od początku poprzedniego chunka do końca obecnego małego
-                merged_text = text[last_chunk["start_char"]:new_end].strip()
-                
-                chunks[-1]["text"] = merged_text
-                chunks[-1]["end_char"] = new_end
-            # B) Jeśli to pierwszy chunk i jest mały, trudno - musimy go dodać, żeby nie zgubić
-            else:
-                 chunks.append({
-                    "text": chunk_text,
-                    "start_char": chunk_start,
-                    "end_char": chunk_end
-                })
-        else:
-            # Jeśli rozmiar jest OK, dodajemy normalnie
-            chunks.append({
-                "text": chunk_text,
-                "start_char": chunk_start,
-                "end_char": chunk_end
-            })
-        
-        # 3. Obliczanie następnego startu (Overlap)
-        next_start_idx = end_idx
-        
-        # Jeśli jesteśmy na końcu, przerywamy
-        if end_idx >= len(boundaries) - 1:
+        if end >= len(text):
+            chunk = text[start:]
+            if len(chunk) >= MIN_CHUNK_SIZE:
+                chunks.append(chunk)
             break
-
-        # Cofamy się o overlap
-        target_pos = chunk_end - overlap
-        for j in range(end_idx, start_idx, -1):
-            if boundaries[j] <= target_pos:
-                next_start_idx = j
+        
+        safe_end = end
+        for sep in ['. ', '.\n', '; ', ':\n']:
+            pos = text.rfind(sep, start + chunk_size // 2, end)
+            if pos != -1:
+                safe_end = pos + len(sep)
                 break
         
-        # Zabezpieczenie przed pętlą w miejscu (zawsze idź min. 1 krok do przodu)
-        if next_start_idx <= start_idx:
-            next_start_idx = start_idx + 1
-            
-        start_idx = next_start_idx
+        chunk = text[start:safe_end].strip()
+        if len(chunk) >= MIN_CHUNK_SIZE:
+            chunks.append(chunk)
+        
+        start = safe_end - overlap
     
     return chunks
 
+def create_enriched_text(chunk, doc):
+    """Wzbogaca chunk o metadane do embeddingu.
+    
+    Dla E5 używamy prefixu 'passage:' dla dokumentów.
+    """
+    context_parts = []
+    
+    court_map = {
+        "COMMON": "sąd powszechny",
+        "SUPREME": "Sąd Najwyższy",
+        "CONSTITUTIONAL_TRIBUNAL": "Trybunał Konstytucyjny"
+    }
+    if doc.get("court_type") in court_map:
+        context_parts.append(court_map[doc["court_type"]])
+    
+    jtype_map = {
+        "SENTENCE": "wyrok",
+        "DECISION": "postanowienie",
+        "RESOLUTION": "uchwała",
+        "REASONS": "uzasadnienie"
+    }
+    if doc.get("judgment_type") in jtype_map:
+        context_parts.append(jtype_map[doc["judgment_type"]])
+    
+    keywords = doc.get("keywords", [])[:3]
+    context_parts.extend(keywords)
+    
+    # E5 wymaga prefixu "passage:" dla dokumentów
+    if context_parts:
+        return f"passage: [{' | '.join(context_parts)}] {chunk}"
+    return f"passage: {chunk}"
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"🚀 Tryb pracy: {device.upper()}")
-
-    if not os.path.exists(DATA_FILE):
-        print(f"❌ Brak pliku '{DATA_FILE}'!")
-        return
-
-    print("📂 Wczytywanie danych...")
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-
-    print(f"🧠 Ładowanie modelu '{MODEL_NAME}'...")
-    encoder = SentenceTransformer(MODEL_NAME, device=device)
-
-    all_chunks = []
-    metadatas = []
-    ids = []
+    print("📂 Ładowanie danych...")
+    with open(DATA_PATH, "r", encoding="utf-8") as f:
+        documents = json.load(f)
+    print(f"✅ Załadowano {len(documents)} dokumentów")
     
-    print("✂️  Inteligentne dzielenie tekstu...")
+    print(f"🔧 Ładowanie modelu: {MODEL_NAME}")
+    print("⏳ To może potrwać chwilę przy pierwszym uruchomieniu...")
     
-    for item in tqdm(raw_data, desc="Przetwarzanie dokumentów"):
-        clean_content = clean_legal_text(item["text"])
-        
-        if len(clean_content) < MIN_CHUNK_SIZE:
-            continue
-
-        chunks = smart_legal_chunker(clean_content)
-        
-        if not chunks:
-            continue
-        
-        total_chunks = len(chunks)
-        
-        for chunk_id, chunk_info in enumerate(chunks):
-            all_chunks.append(chunk_info["text"])
-            metadatas.append({
-                "page_content": chunk_info["text"],
-                "full_document": clean_content,
-                "signature": item["signature"],
-                "date": item["date"],
-                "origin_id": item["id"],
-                "chunk_id": chunk_id,
-                "total_chunks": total_chunks,
-                "start_char": chunk_info["start_char"],
-                "end_char": chunk_info["end_char"],
-            })
-            ids.append(f"{item['id']}_chunk_{chunk_id}")
-
-    print(f"📊 Utworzono {len(all_chunks)} fragmentów z {len(raw_data)} dokumentów.")
-
-    client = QdrantClient(path=DB_PATH)
+    model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+    model.max_seq_length = 512  # Limit dla E5
+    print(f"✅ Model załadowany na {DEVICE.upper()}")
     
-    if client.collection_exists(COLLECTION_NAME):
-        client.delete_collection(collection_name=COLLECTION_NAME)
-    
-    client.create_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=models.VectorParams(size=768, distance=models.Distance.COSINE)
+    print("🗄️ Łączenie z Qdrant Cloud...")
+    client = QdrantClient(
+        url=os.getenv("QDRANT_URL"), 
+        api_key=os.getenv("QDRANT_API_KEY"),
+        timeout=120
     )
     
-    client.create_payload_index(COLLECTION_NAME, "origin_id", models.PayloadSchemaType.INTEGER)
-    client.create_payload_index(COLLECTION_NAME, "signature", models.PayloadSchemaType.KEYWORD)
-
-    BATCH_SIZE = 256
-    print("🔥 Zapisywanie do bazy Qdrant...")
+    if client.collection_exists(COLLECTION_NAME):
+        print("🗑️ Usuwanie starej kolekcji...")
+        client.delete_collection(COLLECTION_NAME)
     
-    for i in tqdm(range(0, len(all_chunks), BATCH_SIZE), desc="Indeksowanie"):
-        batch_texts = all_chunks[i:i + BATCH_SIZE]
-        batch_metas = metadatas[i:i + BATCH_SIZE]
-        batch_ids = ids[i:i + BATCH_SIZE]
-        
-        if not batch_texts:
+    print("📦 Tworzenie nowej kolekcji...")
+    client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
+    )
+    
+    # Indeksy payload
+    for field in ["court_type", "judgment_type", "judgment_date"]:
+        client.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name=field,
+            field_schema=PayloadSchemaType.KEYWORD
+        )
+    
+    print("📝 Przetwarzanie dokumentów...")
+    all_chunks = []
+    all_payloads = []
+    
+    for doc in tqdm(documents, desc="Chunking"):
+        text = clean_legal_text(doc.get("text", ""))
+        if len(text) < MIN_CHUNK_SIZE:
             continue
+        
+        chunks = smart_legal_chunker(text)
+        
+        for chunk in chunks:
+            enriched = create_enriched_text(chunk, doc)
+            all_chunks.append(enriched)
             
-        embeddings = encoder.encode(batch_texts, show_progress_bar=False)
+            all_payloads.append({
+                "page_content": chunk,
+                "origin_id": doc["id"],
+                "signature": doc["signature"],
+                "judgment_date": doc.get("judgment_date", ""),
+                "court_type": doc.get("court_type", ""),
+                "court_name": doc.get("court_name", ""),
+                "judgment_type": doc.get("judgment_type", ""),
+                "keywords": doc.get("keywords", []),
+                "judges": [j.get("name", "") for j in doc.get("judges", [])],
+                "full_document": text
+            })
+    
+    print(f"📊 Utworzono {len(all_chunks)} chunków")
+    
+    print("🚀 Generowanie embeddingów i upload do Qdrant Cloud...")
+    point_id = 0
+    failed_batches = []
+    
+    for i in tqdm(range(0, len(all_chunks), BATCH_SIZE), desc="Batches"):
+        batch_chunks = all_chunks[i:i+BATCH_SIZE]
+        batch_payloads = all_payloads[i:i+BATCH_SIZE]
+        
+        # Generuj embeddingi na GPU
+        vectors = model.encode(
+            batch_chunks,
+            normalize_embeddings=True,  # Ważne dla E5!
+            show_progress_bar=False
+        )
         
         points = [
-            models.PointStruct(
-                id=hashlib.md5(uid.encode()).hexdigest(),
-                vector=vec.tolist(),
-                payload=meta
+            PointStruct(
+                id=point_id + j,
+                vector=vectors[j].tolist(),
+                payload=batch_payloads[j]
             )
-            for uid, vec, meta in zip(batch_ids, embeddings, batch_metas)
+            for j in range(len(vectors))
         ]
         
-        client.upsert(collection_name=COLLECTION_NAME, points=points)
-
-    print(f"\n✅ SUKCES! Baza '{COLLECTION_NAME}' gotowa.")
-
+        # Upload z retry
+        for attempt in range(3):
+            try:
+                client.upsert(collection_name=COLLECTION_NAME, points=points)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    print(f"\n⚠️ Batch {i//BATCH_SIZE} failed: {e}")
+                    failed_batches.append(i)
+                else:
+                    import time
+                    time.sleep(5)
+        
+        point_id += len(points)
+    
+    if failed_batches:
+        print(f"\n⚠️ {len(failed_batches)} batches failed")
+    
+    print(f"\n✅ ZAKOŃCZONO! Zaindeksowano {point_id} chunków w '{COLLECTION_NAME}'")
 
 if __name__ == "__main__":
     main()

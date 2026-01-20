@@ -1,15 +1,24 @@
 import streamlit as st
-from langchain_huggingface import HuggingFaceEmbeddings
 from qdrant_client import QdrantClient
-from sentence_transformers import CrossEncoder
+from qdrant_client.models import Filter, FieldCondition, Range
+from sentence_transformers import SentenceTransformer, CrossEncoder
 from openai import OpenAI
 import re
+from dotenv import load_dotenv
+import os
+import torch
+
+# Ładuj .env
+load_dotenv()
 
 # --- KONFIGURACJA ---
-DB_PATH = "qdrant_db"
-COLLECTION_NAME = "polish_law_hybrid"
-MODEL_NAME = "sdadas/st-polish-paraphrase-from-distilroberta"
+QDRANT_URL = os.getenv("QDRANT_URL")  
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+COLLECTION_NAME = "polish_law_e5"  # Nowa kolekcja
+MODEL_NAME = "intfloat/multilingual-e5-large"  # Nowy model
 RERANKER_MODEL = "sdadas/polish-reranker-large-ranknet"
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Słowa kluczowe związane z wyrokiem/karą
 VERDICT_KEYWORDS = [
@@ -17,6 +26,21 @@ VERDICT_KEYWORDS = [
     "grzywny", "lat", "miesięcy", "warunkowo", "zawieszeniu",
     "oskarżonego uznaje za winnego", "na mocy art"
 ]
+
+# Mapowania typów (do wyświetlania)
+COURT_TYPES = {
+    "COMMON": "🏛️ Sąd powszechny",
+    "SUPREME": "⚖️ Sąd Najwyższy",
+    "CONSTITUTIONAL_TRIBUNAL": "📜 Trybunał Konstytucyjny",
+    "NATIONAL_APPEAL_CHAMBER": "📋 KIO"
+}
+
+JUDGMENT_TYPES = {
+    "SENTENCE": "📝 Wyrok",
+    "DECISION": "📋 Postanowienie",
+    "RESOLUTION": "📜 Uchwała",
+    "REASONS": "📄 Uzasadnienie"
+}
 
 QUERY_REWRITE_PROMPT = """Jesteś ekspertem od polskiego prawa. Użytkownik szuka orzeczeń sądowych w bazie danych.
 
@@ -41,26 +65,36 @@ Zoptymalizowana fraza:"""
 st.set_page_config(page_title="Wyszukiwarka Orzeczeń", page_icon="⚖️", layout="wide")
 st.title("⚖️ Wyszukiwarka Polskich Orzeczeń Sądowych")
 
+
+# === FUNKCJE POMOCNICZE ===
+
 @st.cache_resource
 def load_resources():
     """Ładuje modele - cache'owane."""
-    embeddings = HuggingFaceEmbeddings(model_name=MODEL_NAME)
-    client = QdrantClient(path=DB_PATH)
-    reranker = CrossEncoder(RERANKER_MODEL, max_length=512)
-    return embeddings, client, reranker
+    # E5 model
+    embedder = SentenceTransformer(MODEL_NAME, device=DEVICE)
+    embedder.max_seq_length = 512
+    
+    client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+    reranker = CrossEncoder(RERANKER_MODEL, max_length=512, device=DEVICE)
+    
+    return embedder, client, reranker
 
+
+@st.cache_resource
 def get_openai_client():
-    """Zwraca klienta OpenAI jeśli klucz jest dostępny."""
-    api_key = st.session_state.get("openai_api_key", "")
-    if api_key:
-        return OpenAI(api_key=api_key)
-    return None
+    """Zwraca klienta OpenAI z .env - cache'owane."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    return OpenAI(api_key=api_key)
+
 
 def rewrite_query_with_llm(query, openai_client):
     """Przepisuje zapytanie używając LLM."""
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",  # Tańszy i szybszy, wystarczy do tego zadania
+            model="gpt-4o-mini",
             messages=[
                 {"role": "user", "content": QUERY_REWRITE_PROMPT.format(query=query)}
             ],
@@ -72,6 +106,7 @@ def rewrite_query_with_llm(query, openai_client):
     except Exception as e:
         st.warning(f"⚠️ Błąd LLM: {e}. Używam oryginalnego zapytania.")
         return query
+
 
 def extract_text_from_pdf(uploaded_file):
     """Wyodrębnia tekst z pliku PDF."""
@@ -91,10 +126,33 @@ def extract_text_from_pdf(uploaded_file):
         st.error(f"❌ Błąd odczytu PDF: {e}")
         return None
 
+
 def contains_verdict(text):
     """Sprawdza czy tekst zawiera słowa kluczowe związane z wyrokiem."""
     text_lower = text.lower()
     return any(keyword in text_lower for keyword in VERDICT_KEYWORDS)
+
+
+def build_date_filter(date_from=None, date_to=None):
+    """Buduje filtr Qdrant tylko na podstawie dat."""
+    if not date_from and not date_to:
+        return None
+    
+    range_params = {}
+    if date_from:
+        range_params["gte"] = date_from.strftime("%Y-%m-%d")
+    if date_to:
+        range_params["lte"] = date_to.strftime("%Y-%m-%d")
+    
+    return Filter(
+        must=[
+            FieldCondition(
+                key="judgment_date",
+                range=Range(**range_params)
+            )
+        ]
+    )
+
 
 def rerank_results(query, results, reranker, top_k):
     """Re-rankuje wyniki używając Cross-Encoder."""
@@ -105,8 +163,8 @@ def rerank_results(query, results, reranker, top_k):
     rerank_scores = reranker.predict(pairs)
     
     reranked = sorted(
-        zip(results, rerank_scores), 
-        key=lambda x: x[1], 
+        zip(results, rerank_scores),
+        key=lambda x: x[1],
         reverse=True
     )
     
@@ -117,13 +175,19 @@ def rerank_results(query, results, reranker, top_k):
     
     return final_results
 
-def search_documents(query_vector, client, num_results, use_reranking, reranker, query_text):
-    """Wyszukuje dokumenty z opcjonalnym re-rankingiem."""
+
+def search_documents(query_vector, client, num_results, use_reranking, reranker, query_text,
+                     date_from=None, date_to=None):
+    """Wyszukuje dokumenty z re-rankingiem i filtrem dat."""
     fetch_limit = num_results * 5 if use_reranking else num_results
+    
+    # Filtr tylko po dacie
+    date_filter = build_date_filter(date_from, date_to)
     
     results = client.query_points(
         collection_name=COLLECTION_NAME,
         query=query_vector,
+        query_filter=date_filter,
         limit=fetch_limit,
         with_payload=True
     ).points
@@ -135,8 +199,9 @@ def search_documents(query_vector, client, num_results, use_reranking, reranker,
     
     return results
 
+
 def display_results(results, num_results, prioritize_verdict=False, is_reranked=False):
-    """Wyświetla wyniki wyszukiwania."""
+    """Wyświetla wyniki wyszukiwania z metadanymi."""
     
     if prioritize_verdict and results:
         with_verdict = [r for r in results if contains_verdict(r.payload.get('page_content', ''))]
@@ -147,7 +212,7 @@ def display_results(results, num_results, prioritize_verdict=False, is_reranked=
             st.info(f"🎯 Znaleziono {len(with_verdict)} fragmentów zawierających wyroki/kary")
     
     if not results:
-        st.warning("Brak wyników.")
+        st.warning("Brak wyników dla podanych kryteriów.")
         return
     
     score_label = "Trafność" if is_reranked else "Podobieństwo"
@@ -158,30 +223,70 @@ def display_results(results, num_results, prioritize_verdict=False, is_reranked=
     
     for i, result in enumerate(results):
         payload = result.payload
-        doc_id = payload['origin_id']
+        doc_id = payload.get('origin_id', i)
         
         if doc_id in seen_docs:
             continue
         seen_docs.add(doc_id)
         doc_counter += 1
         
-        signature = payload['signature']
-        date = payload['date']
+        # Podstawowe dane
+        signature = payload.get('signature', 'Brak')
+        date = payload.get('judgment_date', payload.get('date', 'Brak'))
         score = result.score
         
-        full_doc = payload.get('full_document', payload['page_content'])
-        matched_chunk = payload['page_content']
+        # Metadane (do wyświetlenia, nie do filtrowania)
+        court_type = payload.get('court_type', '')
+        judgment_type = payload.get('judgment_type', '')
+        court_name = payload.get('court_name', '')
+        keywords = payload.get('keywords', [])
+        judges = payload.get('judges', [])
+        
+        full_doc = payload.get('full_document', payload.get('page_content', ''))
+        matched_chunk = payload.get('page_content', '')
         
         is_verdict = contains_verdict(matched_chunk)
         verdict_badge = " 🔨" if is_verdict else ""
         
+        # === NAGŁÓWEK DOKUMENTU ===
         st.markdown(f"### 📄 Dokument #{doc_counter}{verdict_badge}")
         
+        # Wiersz z sygnaturą i score
         if is_reranked:
             st.markdown(f"**Sygnatura:** `{signature}` | **Data:** {date} | **{score_label}:** {score:.3f}")
         else:
             st.markdown(f"**Sygnatura:** `{signature}` | **Data:** {date} | **{score_label}:** {score:.2%}")
         
+        # === BADGES (metadane - tylko wyświetlanie) ===
+        badges = []
+        if court_type and court_type in COURT_TYPES:
+            badges.append(COURT_TYPES[court_type])
+        if judgment_type and judgment_type in JUDGMENT_TYPES:
+            badges.append(JUDGMENT_TYPES[judgment_type])
+        
+        if badges:
+            badges_html = " ".join([f'<span style="background-color: #e9ecef; padding: 3px 8px; border-radius: 12px; margin-right: 5px; font-size: 0.85em;">{b}</span>' for b in badges])
+            st.markdown(badges_html, unsafe_allow_html=True)
+        
+        # === DODATKOWE METADANE ===
+        meta_parts = []
+        if court_name:
+            meta_parts.append(f"🏛️ {court_name}")
+        if judges:
+            judges_str = ", ".join(judges[:3])
+            if len(judges) > 3:
+                judges_str += f" (+{len(judges)-3})"
+            meta_parts.append(f"👨‍⚖️ {judges_str}")
+        if keywords:
+            kw_str = ", ".join(keywords[:5])
+            if len(keywords) > 5:
+                kw_str += f" (+{len(keywords)-5})"
+            meta_parts.append(f"🏷️ {kw_str}")
+        
+        if meta_parts:
+            st.caption(" | ".join(meta_parts))
+        
+        # === PASUJĄCY FRAGMENT ===
         with st.expander("🎯 Pasujący fragment", expanded=True):
             bg_color = "#d4edda" if is_verdict else "#fff3cd"
             border_color = "#28a745" if is_verdict else "#ffc107"
@@ -192,8 +297,9 @@ def display_results(results, num_results, prioritize_verdict=False, is_reranked=
                 unsafe_allow_html=True
             )
         
+        # === PEŁNY DOKUMENT ===
         with st.expander("📜 Pokaż pełny dokument"):
-            if matched_chunk in full_doc:
+            if matched_chunk and matched_chunk in full_doc:
                 idx = full_doc.find(matched_chunk)
                 before = full_doc[:idx]
                 after = full_doc[idx + len(matched_chunk):]
@@ -207,42 +313,75 @@ def display_results(results, num_results, prioritize_verdict=False, is_reranked=
                 )
                 st.markdown(highlighted_html, unsafe_allow_html=True)
             else:
-                st.text(full_doc)
+                st.text(full_doc[:10000] if len(full_doc) > 10000 else full_doc)
         
         st.divider()
 
-# --- SIDEBAR: Ustawienia API ---
+
+# === SPRAWDZENIE API KEY NA STARCIE ===
+openai_client = get_openai_client()
+if not openai_client:
+    st.error("❌ Brak klucza OPENAI_API_KEY w pliku .env!")
+    st.info("Smart Query jest wymagane. Dodaj klucz API do pliku `.env`:\n\n`OPENAI_API_KEY=sk-...`")
+    st.stop()
+
+
+# === SIDEBAR ===
 with st.sidebar:
     st.header("⚙️ Ustawienia")
     
-    api_key = st.text_input(
-        "🔑 OpenAI API Key:",
-        type="password",
-        help="Opcjonalne. Pozwala na inteligentne przepisywanie zapytań.",
-        key="openai_api_key"
-    )
-    
-    if api_key:
-        st.success("✅ API Key ustawiony")
-    else:
-        st.info("💡 Bez API Key system działa, ale bez inteligentnego przepisywania zapytań.")
+    st.success("✅ Smart Query aktywne (GPT-4o-mini)")
     
     st.divider()
+    
+    # === FILTR DATY ===
+    st.header("📅 Filtr daty")
+    
+    use_date_filter = st.checkbox("Włącz filtr daty", value=False)
+    
+    date_from = None
+    date_to = None
+    
+    if use_date_filter:
+        col1, col2 = st.columns(2)
+        with col1:
+            date_from = st.date_input(
+                "Od:",
+                value=None,
+                format="YYYY-MM-DD"
+            )
+        with col2:
+            date_to = st.date_input(
+                "Do:",
+                value=None,
+                format="YYYY-MM-DD"
+            )
+    
+    st.divider()
+    
+    # Info
     st.markdown("""
     ### Jak działa system:
-    1. **Bez LLM:** Bezpośrednie wyszukiwanie semantyczne
-    2. **Z LLM:** GPT przepisuje zapytanie na optymalną frazę prawniczą
-    3. **Re-ranking:** Dodatkowy model poprawia trafność
+    1. **🧠 Smart Query** - GPT optymalizuje każde zapytanie
+    2. **Wzbogacone embeddingi** - metadane są częścią wektora
+    3. **Filtr daty** - zawęża przestrzeń wyszukiwania
+    4. **Re-ranking** - poprawia kolejność wyników
     """)
+    
+   
 
-# --- ŁADOWANIE ZASOBÓW ---
+
+# === ŁADOWANIE ZASOBÓW ===
 try:
     with st.spinner("🔄 Ładowanie modeli..."):
         embeddings, client, reranker = load_resources()
     st.success("✅ System załadowany!")
 except Exception as e:
-    st.error(f"❌ Błąd: {e}")
+    
+    st.error(f"❌ Błąd ładowania: {e}")
+    st.info("Upewnij się, że uruchomiłeś `hybrid_ingest.py` i utworzyłeś kolekcję.")
     st.stop()
+
 
 # === TABS ===
 tab1, tab2 = st.tabs(["🔍 Wyszukiwanie tekstowe", "📄 Upload PDF"])
@@ -250,45 +389,49 @@ tab1, tab2 = st.tabs(["🔍 Wyszukiwanie tekstowe", "📄 Upload PDF"])
 # --- TAB 1: Wyszukiwanie tekstowe ---
 with tab1:
     query = st.text_input(
-        "Wpisz zapytanie (możesz pisać naturalnie!):", 
+        "Wpisz zapytanie (możesz pisać naturalnie!):",
         placeholder="Np. Pokaż mi sprawy o wyłudzenie pożyczki",
         key="text_query"
     )
     
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    col1, col2 = st.columns([1, 1])
     with col1:
-        num_results = st.slider("Liczba wyników:", 1, 10, 5, key="text_num")
+        num_results = st.slider("Liczba wyników:", 1, 20, 5, key="text_num")
     with col2:
-        use_reranking = st.checkbox("🎯 Re-ranking", value=True, 
+        use_reranking = st.checkbox("🎯 Re-ranking", value=True,
                                      help="Poprawia trafność wyników")
-    with col3:
-        prioritize_verdict = st.checkbox("🔨 Priorytet: wyroki", value=False)
-    with col4:
-        openai_client = get_openai_client()
-        use_llm = st.checkbox(
-            "🧠 Smart Query", 
-            value=bool(openai_client),
-            disabled=not openai_client,
-            help="Używa GPT do optymalizacji zapytania" if openai_client else "Wymaga API Key w ustawieniach"
-        )
+    
+    prioritize_verdict = st.checkbox("🔨 Priorytet: wyroki/kary", value=False)
     
     if query:
         st.divider()
         
-        # === PRZEPISANIE ZAPYTANIA Z LLM ===
-        search_query = query
-        if use_llm and openai_client:
-            with st.spinner("🧠 Analizuję zapytanie..."):
-                search_query = rewrite_query_with_llm(query, openai_client)
-            
-            st.info(f"🔄 **Oryginalne:** {query}\n\n🎯 **Zoptymalizowane:** {search_query}")
+        # Info o filtrze daty
+        if use_date_filter and (date_from or date_to):
+            date_info = []
+            if date_from:
+                date_info.append(f"od {date_from}")
+            if date_to:
+                date_info.append(f"do {date_to}")
+            st.info(f"📅 Filtr daty: {' '.join(date_info)}")
+        
+        # === PRZEPISANIE ZAPYTANIA Z LLM (OBOWIĄZKOWE) ===
+        with st.spinner("🧠 Analizuję zapytanie..."):
+            search_query = rewrite_query_with_llm(query, openai_client)
+        
+        st.info(f"🔄 **Oryginalne:** {query}\n\n🎯 **Zoptymalizowane:** {search_query}")
         
         # === WYSZUKIWANIE ===
         with st.spinner("🔍 Wyszukiwanie..." + (" + re-ranking" if use_reranking else "")):
-            query_vector = embeddings.embed_query(search_query)
+            query_vector = embeddings.encode(
+    f"query: {search_query}",  # E5 wymaga prefixu "query:" dla zapytań!
+    normalize_embeddings=True
+).tolist()
             results = search_documents(
-                query_vector, client, num_results, 
-                use_reranking, reranker, search_query
+                query_vector, client, num_results,
+                use_reranking, reranker, search_query,
+                date_from=date_from if use_date_filter else None,
+                date_to=date_to if use_date_filter else None
             )
         
         display_results(results, num_results, prioritize_verdict, is_reranked=use_reranking)
@@ -306,13 +449,13 @@ with tab2:
         help="Maksymalny rozmiar pliku: 200MB"
     )
     
-    col1, col2, col3 = st.columns([1, 1, 1])
+    col1, col2 = st.columns([1, 1])
     with col1:
-        num_results_pdf = st.slider("Liczba wyników:", 1, 10, 5, key="pdf_num")
+        num_results_pdf = st.slider("Liczba wyników:", 1, 20, 5, key="pdf_num")
     with col2:
         use_reranking_pdf = st.checkbox("🎯 Re-ranking", value=True, key="pdf_rerank")
-    with col3:
-        prioritize_verdict_pdf = st.checkbox("🔨 Priorytet: wyroki", value=False, key="pdf_verdict")
+    
+    prioritize_verdict_pdf = st.checkbox("🔨 Priorytet: wyroki/kary", value=False, key="pdf_verdict")
     
     if uploaded_file is not None:
         with st.spinner("📖 Odczytywanie PDF..."):
@@ -333,20 +476,26 @@ with tab2:
                 st.divider()
                 
                 with st.spinner("🧠 Analizowanie dokumentu..."):
+                    # Próbkowanie tekstu dla dużych dokumentów
                     if len(extracted_text) <= 3000:
                         text_sample = extracted_text
                     else:
                         chunk_size = 1500
                         text_sample = (
                             extracted_text[:chunk_size] + " " +
-                            extracted_text[len(extracted_text)//2 - chunk_size//2 : len(extracted_text)//2 + chunk_size//2] + " " +
+                            extracted_text[len(extracted_text)//2 - chunk_size//2:len(extracted_text)//2 + chunk_size//2] + " " +
                             extracted_text[-chunk_size:]
                         )
                     
-                    query_vector = embeddings.embed_query(text_sample)
+                    query_vector = embeddings.encode(
+                        f"query: {text_sample}",
+                        normalize_embeddings=True
+                    ).tolist()
                     results = search_documents(
                         query_vector, client, num_results_pdf,
-                        use_reranking_pdf, reranker, text_sample[:1000]
+                        use_reranking_pdf, reranker, text_sample[:1000],
+                        date_from=date_from if use_date_filter else None,
+                        date_to=date_to if use_date_filter else None
                     )
                 
                 st.success("✅ Wyszukiwanie zakończone!")
