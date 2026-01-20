@@ -1,9 +1,10 @@
+
 fastapi
 uvicorn[standard]
 qdrant-client
 sentence-transformers
 openai
 python-dotenv
-torch
 aiohttp
 pydantic
+torch --index-url https://download.pytorch.org/whl/cpu
