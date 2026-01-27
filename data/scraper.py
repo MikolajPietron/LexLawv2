@@ -8,15 +8,17 @@ import ssl
 import certifi
 
 API_URL = "https://www.saos.org.pl/api/dump/judgments"
-DATA_FOLDER = "data"
-FILENAME = "full_dataset.json"
+DATA_FOLDER = "."  # Zapisuj w tym samym folderze
+PROGRESS_FILE = "scraper_progress.json"
+OUTPUT_FILE = "full_dataset.jsonl"  # JSONL - jedna linia = jedno orzeczenie
 
 CURRENT_DATE = datetime.now().strftime("%Y-%m-%d")
-TARGET_COUNT = 100  # Zwiększ do 10k na test
+TARGET_COUNT = float('inf')  # Pobierz WSZYSTKO
 BATCH_SIZE = 100
 TIMEOUT_SECONDS = 30
-MAX_RETRIES = 3
-SAVE_EVERY = 500  # Checkpoint
+MAX_RETRIES = 5
+SAVE_EVERY = 100  # Zapisuj postęp co 100 orzeczeń
+DELAY = 0.2
 
 def clean_html(raw_html):
     if not raw_html:
@@ -25,116 +27,67 @@ def clean_html(raw_html):
     return " ".join(clean.split())
 
 def extract_judgment_data(item):
-    """Wyodrębnia WSZYSTKIE dostępne dane z orzeczenia."""
-    
-    # Podstawowe dane
+    """Wyodrębnia dane z orzeczenia."""
     court_cases = item.get("courtCases", [])
     signature = court_cases[0].get("caseNumber", "") if court_cases else ""
     
-    # Sędziowie
     judges = item.get("judges", [])
-    judges_list = []
-    for judge in judges:
-        judges_list.append({
-            "name": judge.get("name", ""),
-            "function": judge.get("function", ""),  # PRESIDING_JUDGE, REPORTING_JUDGE, etc.
-            "roles": judge.get("specialRoles", [])
-        })
+    judges_names = [j.get("name", "") for j in judges]
     
-    # Podstawy prawne (przywoływane artykuły)
-    legal_bases = item.get("referencedRegulations", [])
-    regulations = []
-    for reg in legal_bases:
-        regulations.append({
-            "title": reg.get("journalTitle", ""),
-            "year": reg.get("journalYear"),
-            "entry": reg.get("journalEntry"),
-            "text": reg.get("text", "")
-        })
-    
-    # Słowa kluczowe
     keywords = item.get("keywords", [])
     
-    # Powiązane orzeczenia
-    referenced_judgments = item.get("referencedCourtCases", [])
-    
-    return {
-        # === IDENTYFIKACJA ===
-        "id": item.get("id"),
-        "source": item.get("source", ""),  # COMMON_COURT, SUPREME_COURT, etc.
-        
-        # === SYGNATURY ===
-        "signature": signature,
-        "all_signatures": [c.get("caseNumber", "") for c in court_cases],
-        
-        # === DATY ===
-        "judgment_date": item.get("judgmentDate"),
-        "receipt_date": item.get("receiptDate"),  # Data wpływu
-        
-        # === TYP ORZECZENIA ===
-        "judgment_type": item.get("judgmentType", ""),  # SENTENCE, DECISION, RESOLUTION, REASONS
-        
-        # === SĄD ===
-        "court_type": item.get("courtType", ""),  # COMMON, SUPREME, CONSTITUTIONAL, etc.
-        "court_name": "",  # Będzie uzupełnione poniżej
-        "court_division": "",
-        
-        # === SĘDZIOWIE ===
-        "judges": judges_list,
-        "judges_count": len(judges_list),
-        
-        # === PODSTAWY PRAWNE ===
-        "legal_bases": regulations,
-        "legal_bases_count": len(regulations),
-        
-        # === SŁOWA KLUCZOWE (z SAOS) ===
-        "keywords": keywords,
-        
-        # === POWIĄZANE SPRAWY ===
-        "referenced_cases": referenced_judgments,
-        
-        # === TREŚĆ ===
-        "text": clean_html(item.get("textContent", "")),
-        "text_length": len(item.get("textContent", "") or ""),
-        
-        # === METADANE ===
-        "has_thesis": bool(item.get("courtReporters")),  # Czy ma tezę
-    }
-
-def enrich_court_data(judgment, item):
-    """Uzupełnia dane o sądzie w zależności od typu."""
-    
     court_type = item.get("courtType", "")
+    court_name = ""
     
     if court_type == "COMMON":
-        # Sądy powszechne
         division = item.get("division", {})
         court = division.get("court", {})
-        judgment["court_name"] = court.get("name", "")
-        judgment["court_division"] = division.get("name", "")
-        judgment["court_code"] = court.get("code", "")
-        
+        court_name = court.get("name", "")
     elif court_type == "SUPREME":
-        # Sąd Najwyższy
-        chamber = item.get("supremeCourtChamber", {})
-        judgment["court_name"] = "Sąd Najwyższy"
-        judgment["court_division"] = chamber.get("name", "")
-        
-        # Skład SN
-        personnel_type = item.get("personnelType", "")
-        judgment["personnel_type"] = personnel_type  # ONE_PERSON, THREE_PERSON, etc.
-        
+        court_name = "Sąd Najwyższy"
     elif court_type == "CONSTITUTIONAL_TRIBUNAL":
-        # Trybunał Konstytucyjny
-        judgment["court_name"] = "Trybunał Konstytucyjny"
-        dissenting = item.get("dissentingOpinions", [])
-        judgment["dissenting_opinions"] = [d.get("textContent", "") for d in dissenting]
-        
+        court_name = "Trybunał Konstytucyjny"
     elif court_type == "NATIONAL_APPEAL_CHAMBER":
-        # Krajowa Izba Odwoławcza
-        judgment["court_name"] = "Krajowa Izba Odwoławcza"
-        
-    return judgment
+        court_name = "Krajowa Izba Odwoławcza"
+    
+    return {
+        "id": item.get("id"),
+        "signature": signature,
+        "judgment_date": item.get("judgmentDate"),
+        "judgment_type": item.get("judgmentType", ""),
+        "court_type": court_type,
+        "court_name": court_name,
+        "judges": judges_names,
+        "keywords": keywords,
+        "text": clean_html(item.get("textContent", "")),
+    }
+
+def load_progress():
+    """Wczytuje postęp z poprzedniej sesji."""
+    filepath = os.path.join(DATA_FOLDER, PROGRESS_FILE)
+    if os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            progress = json.load(f)
+            print(f"📂 Wznawiam od strony {progress['last_page']}, pobrano {progress['count']:,} orzeczeń")
+            return progress
+    return {"last_page": 0, "count": 0, "seen_ids": []}
+
+def save_progress(page, count, seen_ids):
+    """Zapisuje postęp."""
+    filepath = os.path.join(DATA_FOLDER, PROGRESS_FILE)
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump({
+            "last_page": page,
+            "count": count,
+            "seen_ids": list(seen_ids)[-10000:] if len(seen_ids) > 10000 else list(seen_ids)
+        }, f)
+
+def append_judgments(judgments):
+    """Dopisuje orzeczenia do pliku JSONL."""
+    filepath = os.path.join(DATA_FOLDER, OUTPUT_FILE)
+    with open(filepath, "a", encoding="utf-8") as f:
+        for j in judgments:
+            f.write(json.dumps(j, ensure_ascii=False) + "\n")
 
 async def fetch_dump_page(session, page_number, retry=0):
     params = {
@@ -148,66 +101,77 @@ async def fetch_dump_page(session, page_number, retry=0):
         async with session.get(API_URL, params=params, timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)) as response:
             if response.status == 200:
                 data = await response.json()
-                items = data.get("items", [])
                 
+                # Pokaż całkowitą liczbę przy pierwszej stronie
                 if page_number == 0:
-                    total_count = data.get("queryTemplate", {}).get("info", {}).get("totalResults", "?")
-                    print(f"📊 Całkowita liczba orzeczeń w bazie SAOS: {total_count}")
+                    total = data.get("queryTemplate", {}).get("info", {}).get("totalResults", "?")
+                    print(f"📊 Całkowita liczba orzeczeń w SAOS: {total}")
                 
-                return items
+                return data.get("items", [])
+            elif response.status == 429:
+                wait_time = 30 * (retry + 1)
+                print(f"⚠️ Rate limit! Czekam {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                return await fetch_dump_page(session, page_number, retry)
             else:
-                print(f"⚠️ Błąd API (Strona {page_number}): Kod {response.status}")
+                print(f"⚠️ Błąd {response.status} na stronie {page_number}")
                 return []
     except asyncio.TimeoutError:
         if retry < MAX_RETRIES:
-            print(f"⏳ Timeout na stronie {page_number}, ponawiam ({retry+1}/{MAX_RETRIES})...")
-            await asyncio.sleep(2)
+            print(f"⏳ Timeout strona {page_number}, retry {retry+1}/{MAX_RETRIES}...")
+            await asyncio.sleep(5 * (retry + 1))
             return await fetch_dump_page(session, page_number, retry + 1)
+        print(f"❌ Max retries na stronie {page_number}")
         return []
     except Exception as e:
         if retry < MAX_RETRIES:
-            print(f"🔄 Błąd: {e}, ponawiam za 5s ({retry+1}/{MAX_RETRIES})...")
-            await asyncio.sleep(5)
+            print(f"🔄 Błąd: {e}, retry za 10s...")
+            await asyncio.sleep(10)
             return await fetch_dump_page(session, page_number, retry + 1)
         return []
 
-def save_checkpoint(judgments, filename):
-    """Zapisuje checkpoint."""
-    filepath = os.path.join(DATA_FOLDER, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(judgments, f, ensure_ascii=False, indent=2)
-    print(f"💾 Checkpoint zapisany: {len(judgments)} orzeczeń")
-
 async def main():
-    print(f"🚀 Start pobierania pełnych danych... Data końcowa: {CURRENT_DATE}")
+    print(f"🚀 Scraper SAOS - Pobieranie WSZYSTKICH orzeczeń!")
+    print(f"📅 Data końcowa: {CURRENT_DATE}")
     
-    valid_judgments = []
-    page = 0
+    # Wczytaj postęp
+    progress = load_progress()
+    page = progress["last_page"]
+    count = progress["count"]
+    seen_ids = set(progress.get("seen_ids", []))
     
     ssl_context = ssl.create_default_context(cafile=certifi.where())
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
+    connector = aiohttp.TCPConnector(ssl=ssl_context, limit=5)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
         "Accept": "application/json",
     }
     
-    if not os.path.exists(DATA_FOLDER):
-        os.makedirs(DATA_FOLDER)
+    buffer = []
+    empty_pages = 0
+    start_time = datetime.now()
     
     async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
-        while len(valid_judgments) < TARGET_COUNT:
-            print(f"📥 Strona {page} (Pobrano: {len(valid_judgments)}/{TARGET_COUNT})...")
-            
+        while True:  # Bez limitu - aż skończą się dane
             items = await fetch_dump_page(session, page)
             
             if not items:
-                print("⚠️ Brak więcej danych.")
-                break
+                empty_pages += 1
+                if empty_pages >= 5:
+                    print("✅ Koniec danych - pobrano wszystko!")
+                    break
+                page += 1
+                continue
+            
+            empty_pages = 0
             
             for item in items:
-                raw_text = item.get("textContent")
+                item_id = item.get("id")
                 
-                # Walidacja
+                if item_id in seen_ids:
+                    continue
+                
+                raw_text = item.get("textContent")
                 if not raw_text or len(raw_text) < 500:
                     continue
                 
@@ -215,42 +179,39 @@ async def main():
                 if not court_cases or not court_cases[0].get("caseNumber"):
                     continue
                 
-                # Ekstrakcja pełnych danych
                 judgment = extract_judgment_data(item)
-                judgment = enrich_court_data(judgment, item)
-                
-                valid_judgments.append(judgment)
-                
-                if len(valid_judgments) >= TARGET_COUNT:
-                    break
+                buffer.append(judgment)
+                seen_ids.add(item_id)
+                count += 1
             
-            # Checkpoint co SAVE_EVERY
-            if len(valid_judgments) % SAVE_EVERY == 0 and len(valid_judgments) > 0:
-                save_checkpoint(valid_judgments, f"checkpoint_{len(valid_judgments)}.json")
+            # Zapisz bufor
+            if len(buffer) >= SAVE_EVERY:
+                append_judgments(buffer)
+                save_progress(page, count, seen_ids)
+                
+                elapsed = (datetime.now() - start_time).total_seconds()
+                speed = count / elapsed if elapsed > 0 else 0
+                print(f"📥 Strona {page:,} | Pobrano: {count:,} | Prędkość: {speed:.1f}/s")
+                buffer = []
             
             page += 1
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(DELAY)
     
-    # Zapisz finalny plik
-    filepath = os.path.join(DATA_FOLDER, FILENAME)
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(valid_judgments, f, ensure_ascii=False, indent=2)
+    # Zapisz resztę
+    if buffer:
+        append_judgments(buffer)
+        save_progress(page, count, seen_ids)
     
-    print(f"\n✅ ZAKOŃCZONO! Pobrano {len(valid_judgments)} orzeczeń z pełnymi danymi.")
-    print(f"📂 Plik: {filepath}")
+    elapsed_total = (datetime.now() - start_time).total_seconds() / 3600
+    print(f"\n✅ ZAKOŃCZONO!")
+    print(f"📊 Pobrano: {count:,} orzeczeń")
+    print(f"⏱️ Czas: {elapsed_total:.1f} godzin")
+    print(f"📂 Plik: {os.path.join(DATA_FOLDER, OUTPUT_FILE)}")
     
-    # Statystyki
-    court_types = {}
-    judgment_types = {}
-    for j in valid_judgments:
-        ct = j.get("court_type", "UNKNOWN")
-        jt = j.get("judgment_type", "UNKNOWN")
-        court_types[ct] = court_types.get(ct, 0) + 1
-        judgment_types[jt] = judgment_types.get(jt, 0) + 1
-    
-    print("\n📊 Statystyki:")
-    print("Typy sądów:", court_types)
-    print("Typy orzeczeń:", judgment_types)
+    # Usuń plik postępu
+    progress_path = os.path.join(DATA_FOLDER, PROGRESS_FILE)
+    if os.path.exists(progress_path):
+        os.remove(progress_path)
 
 if __name__ == "__main__":
     if os.name == 'nt':

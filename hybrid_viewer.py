@@ -7,14 +7,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- KONFIGURACJA ---
+
 COLLECTION_NAME = "polish_law_e5"
 DATA_FILE = "data/full_dataset.json"
 
 st.set_page_config(page_title="Przeglądarka Chunków", layout="wide")
 st.title("🔍 Inspektor Chunków - E5 Model")
 
-# 1. Ładowanie listy wyroków z pliku JSON
+
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
@@ -23,7 +23,7 @@ else:
     st.error(f"❌ Brak pliku {DATA_FILE}!")
     st.stop()
 
-# 2. Połączenie z Qdrant Cloud
+
 try:
     client = QdrantClient(
         url=os.getenv("QDRANT_URL"),
@@ -39,7 +39,7 @@ except Exception as e:
     st.error(f"❌ Błąd połączenia: {e}")
     st.stop()
 
-# === WYBÓR WYROKU ===
+
 selected_label = st.selectbox("Wybierz orzeczenie:", list(options.keys()))
 selected_id = options[selected_label]
 
@@ -78,7 +78,7 @@ if st.button("📂 Pokaż wszystkie chunki"):
     else:
         st.info(f"📊 Znaleziono **{len(points)}** chunków")
         
-        # === STATYSTYKI ===
+        
         col1, col2, col3 = st.columns(3)
         chunk_lengths = [len(p.payload.get('page_content', '')) for p in points]
         
@@ -95,29 +95,29 @@ if st.button("📂 Pokaż wszystkie chunki"):
         for i, point in enumerate(points):
             content = point.payload.get('page_content', '')
             
-            # Analiza początku chunka
+           
             first_50 = content[:50]
             starts_mid_sentence = not content[0].isupper() if content else False
             
             status = "⚠️ UCIĘTY" if starts_mid_sentence else "✅ OK"
             
             with st.expander(f"Chunk #{i+1} | {len(content)} znaków | {status}"):
-                # Pokaż początek
+                
                 st.markdown("**Początek:**")
                 if starts_mid_sentence:
                     st.error(f"```{first_50}...```")
                 else:
                     st.success(f"```{first_50}...```")
                 
-                # Pokaż koniec
+               
                 st.markdown("**Koniec:**")
                 st.code(f"...{content[-50:]}")
                 
-                # Pełny tekst
+                
                 st.markdown("**Pełny chunk:**")
                 st.text_area("", content, height=150, key=f"chunk_{i}", disabled=True)
 
-# === PORÓWNANIE Z ORYGINAŁEM ===
+
 st.divider()
 if st.checkbox("📋 Pokaż oryginalny tekst z JSON"):
     original = next((item for item in raw_data if item['id'] == selected_id), None)

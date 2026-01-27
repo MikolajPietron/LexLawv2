@@ -54,3 +54,9 @@ npm-debug.log*
 htmlcov/
 .coverage
 .pytest_cache/
+
+# Large dataset files
+full_dataset.json
+full_dataset.jsonl
+data/full_dataset.json
+*.jsonl

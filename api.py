@@ -16,19 +16,19 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 # CORS dla Next.js
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Konfiguracja ---
+
 COLLECTION_NAME = "polish_law_e5"
 MODEL_NAME = "intfloat/multilingual-e5-large"
 RERANKER_MODEL = "sdadas/polish-reranker-large-ranknet"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# --- Modele (ładowane przy starcie) ---
+
 embedder = None
 reranker = None
 qdrant = None
@@ -48,7 +48,7 @@ async def load_models():
     
     print("✅ Modele załadowane!")
 
-# --- Modele Request/Response ---
+
 class SearchRequest(BaseModel):
     query: str
     num_results: int = 5
@@ -71,7 +71,7 @@ class SearchResponse(BaseModel):
     optimized_query: str
     results: list[SearchResult]
 
-# --- Funkcje pomocnicze ---
+
 QUERY_REWRITE_PROMPT = """Jesteś ekspertem od polskiego prawa. Przekształć zapytanie na optymalną frazę do wyszukiwania semantycznego.
 Zasady: usuń zbędne słowa, dodaj synonimy prawnicze, dodaj artykuły kodeksu jeśli znasz.
 Odpowiedz TYLKO zoptymalizowaną frazą (5-20 słów).
@@ -100,23 +100,23 @@ def rerank_results(query: str, results, top_k: int):
     reranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
     return [(r, float(s)) for r, s in reranked[:top_k]]
 
-# --- Endpointy ---
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "device": DEVICE}
 
 @app.post("/search", response_model=SearchResponse)
 def search(request: SearchRequest):
-    # 1. Przepisz zapytanie
+    
     optimized = rewrite_query(request.query)
     
-    # 2. Generuj embedding
+    
     query_vector = embedder.encode(
         f"query: {optimized}",
         normalize_embeddings=True
     ).tolist()
     
-    # 3. Szukaj w Qdrant
+    
     fetch_limit = request.num_results * 5 if request.use_reranking else request.num_results
     
     search_results = qdrant.query_points(
@@ -126,13 +126,13 @@ def search(request: SearchRequest):
         with_payload=True
     ).points
     
-    # 4. Re-ranking
+    
     if request.use_reranking and search_results:
         scored_results = rerank_results(optimized, search_results, request.num_results)
     else:
         scored_results = [(r, float(r.score)) for r in search_results[:request.num_results]]
     
-    # 5. Formatuj wyniki
+    
     results = []
     for result, score in scored_results:
         p = result.payload
@@ -168,7 +168,7 @@ async def get_full_judgment(judgment_id: int):
                 data = await response.json()
                 judgment_data = data.get("data", {})
                 
-                # Wyczyść HTML
+                
                 raw_text = judgment_data.get("textContent", "")
                 clean_text = re.sub(r'<.*?>', ' ', raw_text)
                 clean_text = " ".join(clean_text.split())
