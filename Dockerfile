@@ -8,11 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Kopiuj requirements i zainstaluj
-COPY  .
-RUN pip install --no-cache-dir -r 
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Kopiuj kod
-COPY  .
+COPY . .
 
 # Port dla HF Spaces
 EXPOSE 7860
