@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 80" width="340" height="80">
+  <defs>
+    <linearGradient id="wg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E8DEC8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ICON MARK: a refined diamond split by a single horizontal line,
+       with two small mirrored arcs above and below — evoking retrieval / focus / precision -->
+
+  <!-- Outer diamond -->
+  <polygon
+    points="40,6 66,40 40,74 14,40"
+    fill="none"
+    stroke="url(#wg)"
+    stroke-width="1.4"
+  />
+
+  <!-- Horizontal split line across diamond centre -->
+  <line x1="14" y1="40" x2="66" y2="40" stroke="#F0E8D0" stroke-width="0.9" opacity="0.6"/>
+
+  <!-- Top inner arc (retrieval curve) -->
+  <path d="M 28,40 Q 40,18 52,40" fill="none" stroke="url(#wg)" stroke-width="1.4" stroke-linecap="round"/>
+
+  <!-- Tiny centre dot -->
+  <circle cx="40" cy="40" r="2.2" fill="#FFFFFF"/>
+
+  <!-- WORDMARK: Lexara — elegant, tracked, lightweight -->
+  <text
+    x="86" y="51"
+    font-family="'Palatino Linotype', 'Book Antiqua', Palatino, 'Times New Roman', serif"
+    font-size="34"
+    font-weight="400"
+    letter-spacing="3"
+    fill="url(#wg)"
+  >Lexara</text>
+
+</svg>
