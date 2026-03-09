@@ -12,7 +12,7 @@ const Header = () => {
         <Link href="/home" className='text-sm text-neutral-400 hover:text-white transition-colors'>Home</Link>
         <Link href="/about" className='text-sm text-neutral-400 hover:text-white transition-colors'>About</Link>
         <Link href="/contact" className='text-sm text-neutral-400 hover:text-white transition-colors'>Contact</Link>
-        <Link href="/home" className='text-sm text-neutral-400 hover:text-white transition-colors'>Pricing</Link>
+        <Link href="/pricing" className='text-sm text-neutral-400 hover:text-white transition-colors'>Pricing</Link>
       </nav>
       <div className='flex items-center gap-3'>
         <Show when="signed-out">
@@ -20,7 +20,7 @@ const Header = () => {
             <button className='text-sm text-neutral-400 hover:text-white px-4 py-1.5 transition-colors cursor-pointer'>Sign In</button>
           </SignInButton>
           <SignUpButton>
-            <button className='text-sm bg-[#8b2c8b] text-white px-4 py-1.5 rounded-lg font-medium hover:bg-neutral-200 cursor-pointer transition-colors'>Sign Up</button>
+            <button className='text-sm bg-[#e05929] text-white px-4 py-1.5 rounded-lg font-medium hover:text-black duration-500 hover:bg-neutral-200 cursor-pointer transition-colors'>Sign Up</button>
           </SignUpButton>
         </Show>
         <Show when="signed-in">

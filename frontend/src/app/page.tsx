@@ -1,12 +1,16 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { searchRulings, getFullJudgment, SearchResponse, FullJudgment } from '../../lib/api';
+import { useAuth } from '@clerk/nextjs';
+import { SignInButton } from '@clerk/nextjs';
+import { askQuestion, getFullJudgment, AskResponse, FullJudgment, RateLimitError } from '../../lib/api';
 import ColorBends from '../components/ColorBends';
 import Orb from '../components/Orb';
 import Prism from '../components/Prism';
 import Aurora from '../components/Aurora';
 import RippleGrid from '../components/RippleGrid';
+import BackgroundImg from '../../public/bgimg.jpg';
+import { GlassCard } from 'react-glass-ui';
 import { 
   Search,
   X, 
@@ -15,7 +19,8 @@ import {
   Calendar,
   Users,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  BotMessageSquare
 } from 'lucide-react';
 
 const COURT_TYPES: Record<string, string> = {
@@ -41,22 +46,31 @@ const EXAMPLE_QUERIES = [
 
 export default function Home() {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResponse | null>(null);
+  const [results, setResults] = useState<AskResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedJudgment, setSelectedJudgment] = useState<FullJudgment | null>(null);
   const [loadingJudgment, setLoadingJudgment] = useState(false);
+  const [rateLimitInfo, setRateLimitInfo] = useState<RateLimitError | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { getToken } = useAuth();
+    const [answerExpanded, setAnswerExpanded] = useState(false);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || loading) return;
 
     setLoading(true);
+    setRateLimitInfo(null);
     try {
-      const data = await searchRulings(query, 5, true);
+      const token = await getToken();
+      const data = await askQuestion(query, 5, true, token);
       setResults(data);
     } catch (error) {
-      console.error(error);
+      if (error && typeof error === 'object' && 'detail' in error && (error as RateLimitError).detail === 'rate_limit') {
+        setRateLimitInfo(error as RateLimitError);
+      } else {
+        console.error(error);
+      }
     }
     setLoading(false);
   };
@@ -64,7 +78,8 @@ export default function Home() {
   const handleShowFull = async (originId: number) => {
     setLoadingJudgment(true);
     try {
-      const judgment = await getFullJudgment(originId);
+      const token = await getToken();
+      const judgment = await getFullJudgment(originId, token);
       setSelectedJudgment(judgment);
     } catch (error) {
       console.error(error);
@@ -80,79 +95,104 @@ export default function Home() {
   const hasResults = results !== null;
 
   return (
-    <div className="h-full relative">
-      <div className="bg-scene" />
-      <div className="bg-blobs">
-     <div style={{ position: 'absolute', inset: 0 }}>
-  <RippleGrid
-    enableRainbow={false}
-    gridColor="#c084fc"
-    rippleIntensity={0.006}
-    gridSize={20}
-    gridThickness={15}
-    mouseInteraction={true}
-    mouseInteractionRadius={1.2}
-    opacity={0.9}
-  />
-</div>
-       
-      </div>
-   {/* Background */}
-
-
-{/* Content */}
-<main className={`relative z-10 pt-[60px] min-h-screen flex flex-col ${!hasResults ? 'justify-center' : ''}`}>y
+    <div className="min-h-screen relative">
+      {/* Blurred background image */}
+      <div
+        className="fixed inset-0 bg-[url('/bgimg.jpg')] bg-cover bg-center"
+        style={{ filter: 'blur(4px)', transform: 'scale(1.05)' }}
+      />
+      {/* Content */}
+      <main className={`relative z-10 min-h-screen flex flex-col ${!hasResults ? 'items-center justify-center' : 'pt-[60px]'}`}>
         {/* Hero / Search Section */}
-        <div className={`w-full transition-all duration-500 ${hasResults ? 'py-8' : 'py-0 -mt-10'}`}>
-          <div className={`mx-auto px-6 ${hasResults ? 'max-w-4xl' : 'max-w-2xl'}`}>
+        <div className={`w-full transition-all duration-500 ${hasResults ? 'py-8' : 'py-0'}`}>
+          <div className={`mx-auto px-6 ${hasResults ? 'max-w-4xl' : 'max-w-4xl'}`}>
 
             {/* Hero text — only before results */}
             {!hasResults && (
               <div className="text-center mb-10">
-                <h1 className="text-4xl font-semibold text-white tracking-tight mb-3">
+                <h1 className="text-5xl font-semibold text-white mb-6" style={{ fontFamily: "'Agrandir WideLight', sans-serif", letterSpacing: '0.1em' }}>
                   Wyszukiwarka orzeczeń sądowych
                 </h1>
-                <p className="text-neutral-500 text-base">
-                  Przeszukuj tysiące polskich orzeczeń sądowych za pomocą AI.
+                <p className="text-[#cbced4] text-base mb-24" style={{ fontFamily: "'Agrandir WideLight', sans-serif", letterSpacing: '0.1em' }}>
+                  Przeszukuj miliony polskich orzeczeń sądowych za pomocą AI.
                 </p>
               </div>
             )}
 
-            {/* Search bar — unchanged */}
+            {/* Search bar */}
             <form onSubmit={handleSearch}>
-              <div className="flex items-center gap-3 px-4 py-3 h-18 rounded-2xl bg-neutral-900 border border-offwhite focus-within:border-white transition-colors">
-                <Search className="w-6 h-6 text-neutral-500 flex-shrink-0 text-white" />
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="np. odszkodowanie za wypadek przy pracy..."
-                  className="flex-1 bg-transparent text-white text-m placeholder:text-neutral-600 focus:outline-none"
-                />
-                
-                <button
-                  type="submit"
-                  disabled={!query.trim() || loading}
-                  className="flex-shrink-0 h-8 px-4 rounded-lg bg-white text-black text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed hover:bg-neutral-200 transition-all"
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }} suppressHydrationWarning>
+                <GlassCard
+                  height={60}
+                  blur={12}
+                  brightness={90}
+                  saturation={120}
+                  borderRadius={20}
+                  borderSize={1}
+                  borderColor="#ffffff"
+                  borderOpacity={0.2}
+                  backgroundOpacity={0.1}
+                  backgroundColor="#ffffff"
+                  padding="12px 24px"
+                  flexibility={0.5}
+                  onHoverScale={1.01}
+                  chromaticAberration={12}
+                  distortion={0}
+                  contentCenter
+                  itemsCenter
                 >
-                  {loading ? (
-                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                  ) : (
-                    'Szukaj'
-                  )}
-                </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '500px' }}>
+                    <Search className="w-6 h-6 text-white flex-shrink-0" />
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="np. odszkodowanie za wypadek przy pracy..."
+                      className="flex-1 bg-transparent text-white text-m placeholder:text-white focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!query.trim() || loading}
+                      className="flex-shrink-0 h-8 px-4 rounded-lg bg-white text-black text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed hover:bg-neutral-200 transition-all"
+                    >
+                      {loading ? (
+                        <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                      ) : (
+                        'Szukaj'
+                      )}
+                    </button>
+                  </div>
+                </GlassCard>
               </div>
             </form>
 
+            {/* Rate limit banner */}
+            {rateLimitInfo && (
+              <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300">
+                {rateLimitInfo.authenticated ? (
+                  <p>Dzienny limit wyszukiwań ({rateLimitInfo.limit}) został wyczerpany. Spróbuj ponownie jutro.</p>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <p>Limit darmowych wyszukiwań wyczerpany. Zaloguj się, aby kontynuować.</p>
+                    <SignInButton>
+                      <button className="ml-4 flex-shrink-0 px-4 py-1.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 transition-all cursor-pointer">
+                        Zaloguj się
+                      </button>
+                    </SignInButton>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Example queries — only before results */}
-            {!hasResults && (
+            {!hasResults && !rateLimitInfo && (
               <div className="flex flex-wrap justify-center gap-2 mt-5">
                 {EXAMPLE_QUERIES.map((example) => (
                   <button
                     key={example}
                     onClick={() => handleExampleClick(example)}
-                    className="text-xs text-neutral-500 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.15] hover:text-neutral-300 transition-all cursor-pointer"
+                    className="text-xs text-white px-3 py-1.5 rounded-lg bg-white/[0.1] border border-white/[0.6] hover:border-white/[0.15] hover:text-neutral-300 transition-all cursor-pointer"
                   >
                     {example}
                   </button>
@@ -181,12 +221,56 @@ export default function Home() {
                 </div>
                 <button
                   onClick={() => setResults(null)}
-                  className="text-xs uppercase tracking-wider text-neutral-600 hover:text-white transition-colors"
+                  className="text-xs uppercase tracking-wider text-white hover:text-white transition-colors"
                 >
                   Nowe wyszukiwanie
                 </button>
               </div>
 
+                            {/* AI Answer Card */}
+              {results.answer && (() => {
+                const paragraphs = results.answer.split('\n\n');
+                const firstParagraph = paragraphs[0];
+                const rest = paragraphs.slice(1).join('\n\n');
+
+                return (
+                  <div className="mb-6 rounded-xl bg-white/[0.04] backdrop-blur-md border border-white/[0.08] border-l-2 border-l-[#e05929] shadow-lg shadow-black/20">
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <BotMessageSquare className="w-4 h-4 text-[#e05929]" />
+                        <h3 className="text-sm font-semibold text-white">Odpowiedź AI</h3>
+                      </div>
+                      <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap">{firstParagraph}</p>
+
+                      {rest && (
+                        <>
+                          <div
+                            className="grid transition-[grid-template-rows] duration-500 ease-in-out"
+                            style={{ gridTemplateRows: answerExpanded ? '1fr' : '0fr' }}
+                          >
+                            <div className="overflow-hidden">
+                              <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap pt-4">{rest}</p>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => setAnswerExpanded(!answerExpanded)}
+                            className="mt-3 flex items-center gap-1.5 text-xs font-medium text-white hover:text-white hover:scale-[1.05] duration-300 transition-all cursor-pointer"
+                          >
+                            {answerExpanded ? 'Zwiń' : 'Rozwiń pełną odpowiedź'}
+                            <svg
+                              className={`w-3.5 h-3.5 transition-transform duration-300 ${answerExpanded ? 'rotate-180' : ''}`}
+                              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="space-y-3">
                 {results.results.map((result, i) => {
                   const pct = Math.round(result.score * 100);
@@ -213,7 +297,7 @@ export default function Home() {
                           <h4 className="text-sm font-semibold text-white mb-1.5">
                             {result.signature}
                           </h4>
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-neutral-500">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-neutral-300">
                             <span className="flex items-center gap-1.5">
                               <Calendar className="w-3 h-3" />
                               {result.judgment_date}
@@ -268,8 +352,7 @@ export default function Home() {
                       <button
                         onClick={() => handleShowFull(result.origin_id)}
                         disabled={loadingJudgment}
-                        className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 hover:text-[#c084fc] hover:underline underline-offset-4 transition-colors"
-                      >
+className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-100 hover:text-white hover:underline underline-offset-4 transition-colors"                      >
                         Pokaż pełną treść
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
@@ -282,7 +365,7 @@ export default function Home() {
         )}
       </main>
 
-       {/* Modal */}
+      {/* Modal */}
       {selectedJudgment && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pb-4 sm:pb-6">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm modal-overlay" 
