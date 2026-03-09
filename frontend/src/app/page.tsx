@@ -6,9 +6,7 @@ import { SignInButton } from '@clerk/nextjs';
 import { askQuestion, getFullJudgment, AskResponse, FullJudgment, RateLimitError } from '../../lib/api';
 import ColorBends from '../components/ColorBends';
 import Orb from '../components/Orb';
-import Prism from '../components/Prism';
-import Aurora from '../components/Aurora';
-import RippleGrid from '../components/RippleGrid';
+
 import BackgroundImg from '../../public/bgimg.jpg';
 import { GlassCard } from 'react-glass-ui';
 import { 
