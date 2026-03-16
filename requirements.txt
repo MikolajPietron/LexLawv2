@@ -12,3 +12,5 @@ streamlit
 pymupdf
 PyJWT
 cryptography
+stripe
+httpx

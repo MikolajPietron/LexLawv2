@@ -29,7 +29,102 @@ export default function RootLayout({
       
         className={`${poppins.variable} antialiased`}
       >
-        <ClerkProvider>
+        <ClerkProvider
+          appearance={{
+            variables: {
+              colorPrimary: '#e05929',
+              colorBackground: '#0a0a0a',
+              colorInputBackground: 'rgba(255, 255, 255, 0.04)',
+              colorInputText: '#ffffff',
+              colorText: '#ffffff',
+              colorTextSecondary: '#a3a3a3',
+              colorDanger: '#ef4444',
+              borderRadius: '0.75rem',
+              fontFamily: 'var(--font-poppins), sans-serif',
+            },
+                        elements: {
+              // ─── Sign In / Sign Up modals ───
+              card: 'bg-black/80 backdrop-blur-xl border border-white/[0.08] shadow-2xl shadow-black/40',
+              headerTitle: 'text-white',
+              headerSubtitle: 'text-neutral-400',
+              socialButtonsBlockButton: 'bg-white/[0.06] border border-white/[0.1] text-white hover:bg-white/[0.1]',
+              socialButtonsBlockButtonText: 'text-neutral-300',
+              dividerLine: 'bg-white/[0.08]',
+              dividerText: 'text-neutral-500',
+              formFieldLabel: 'text-neutral-400',
+              formFieldInput: 'bg-white/[0.04] border-white/[0.1] text-white placeholder:text-neutral-600',
+              formButtonPrimary: 'bg-[#e05929] hover:bg-[#c94d23] text-white',
+              footerActionLink: 'text-[#e05929] hover:text-[#ff7043]',
+              footerActionText: 'text-neutral-500',
+
+              // ─── UserButton popover (custom now, can keep as fallback) ───
+              userButtonPopoverCard: 'bg-black/90 backdrop-blur-xl border border-white/[0.08]',
+              userButtonPopoverActionButton: 'text-neutral-300 hover:bg-white/[0.06]',
+              userButtonPopoverActionButtonText: 'text-neutral-300',
+              userButtonPopoverFooter: 'hidden',
+
+              // ─── UserProfile (opened via openUserProfile()) ───
+              rootBox: 'w-full',
+              pageScrollBox: 'bg-transparent',
+              page: 'bg-transparent',
+              profilePage: 'bg-transparent',
+
+              // Main card & navbar
+              cardBox: 'bg-black/80 backdrop-blur-xl border border-white/[0.08] shadow-2xl shadow-black/40 rounded-2xl overflow-hidden',
+              navbar: 'bg-white/[0.02] border-r border-white/[0.06]',
+              navbarButton: 'text-neutral-400 hover:text-white hover:bg-white/[0.06] rounded-lg transition-colors',
+              navbarButtonIcon: 'text-neutral-500',
+              navbarButton__active: 'text-white bg-white/[0.06] border-l-2 border-l-[#e05929]',
+
+              // Profile header
+              profileSectionTitle: 'text-white border-b border-white/[0.06] pb-3',
+              profileSectionTitleText: 'text-sm font-semibold text-white',
+              profileSectionSubtitle: 'text-neutral-500',
+              profileSectionContent: 'border-none',
+
+              // Content blocks
+              profileSectionPrimaryButton: 'text-[#e05929] hover:text-[#ff7043] transition-colors',
+              accordionTriggerButton: 'text-neutral-300 hover:bg-white/[0.04] rounded-lg transition-colors',
+              accordionContent: 'border-t border-white/[0.06]',
+
+              // Avatar section
+              avatarBox: 'ring-2 ring-[#e05929]/30 ring-offset-2 ring-offset-black rounded-full',
+              avatarImageActionsUpload: 'text-[#e05929] hover:text-[#ff7043]',
+              avatarImageActionsRemove: 'text-neutral-500 hover:text-red-400',
+
+              // Form fields inside profile
+              formFieldRow: 'border-b border-white/[0.04] py-3',
+              formFieldLabelRow: 'text-neutral-400',
+              formFieldInputShowPasswordButton: 'text-neutral-500 hover:text-white',
+              formFieldSuccessText: 'text-emerald-400',
+              formFieldErrorText: 'text-red-400',
+              formFieldHintText: 'text-neutral-600',
+
+              // Buttons
+              formButtonReset: 'text-neutral-400 hover:text-white border border-white/[0.1] hover:border-white/[0.2] bg-transparent transition-colors',
+
+              // Badges
+              badge: 'bg-[#e05929]/10 text-[#e05929] border border-[#e05929]/20',
+              badgePrimary: 'bg-[#e05929]/10 text-[#e05929] border border-[#e05929]/20',
+
+              // Active devices / sessions
+              activeDeviceListItem: 'border border-white/[0.06] rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-colors',
+              activeDevice: 'text-neutral-300',
+              activeDeviceIcon: 'text-neutral-500',
+
+              // Danger zone (delete account, etc.)
+              dangerSection: 'border border-red-500/20 rounded-xl bg-red-500/[0.04]',
+
+              // Modal overlay when profile opens as modal
+              modalBackdrop: 'bg-black/80 backdrop-blur-sm',
+              modalContent: 'bg-transparent shadow-none',
+
+              // Footer
+              footerPages: 'hidden',
+              footerPagesLink: 'hidden',
+            },
+          }}
+        >
         <Header/>
         
         {children}

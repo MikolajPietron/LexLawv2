@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import httpx
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer, CrossEncoder
@@ -15,8 +16,13 @@ from datetime import datetime, timezone
 from urllib.request import urlopen
 import json
 import base64
+import stripe
 
 load_dotenv()
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
+CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY")
 
 app = FastAPI(title="Polish Law Search API")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -66,8 +72,8 @@ def _get_jwks() -> list:
     _jwks_cache["fetched_at"] = now
     return jwks["keys"]
 
-def _verify_clerk_token(token: str) -> str:
-    """Verify a Clerk JWT and return the user ID (sub claim)."""
+def _verify_clerk_token(token: str) -> dict:
+    """Verify a Clerk JWT and return the payload."""
     header = jwt.get_unverified_header(token)
     jwks_keys = _get_jwks()
     
@@ -86,10 +92,11 @@ def _verify_clerk_token(token: str) -> str:
         algorithms=["RS256"],
         issuer=CLERK_FRONTEND_API,
     )
-    return payload["sub"]
+    return payload
 
-async def get_current_user(request: Request) -> str | None:
-    """FastAPI dependency: returns Clerk user ID or None for anonymous."""
+
+async def get_current_user(request: Request) -> dict | None:
+    """FastAPI dependency: returns Clerk JWT payload or None for anonymous."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
@@ -107,6 +114,7 @@ async def get_current_user(request: Request) -> str | None:
 
 RATE_LIMIT_AUTH = 10
 RATE_LIMIT_ANON = 3
+RATE_LIMIT_PRO = 1000
 _rate_limit_store: dict[str, list[float]] = {}
 
 def _get_today_key() -> str:
@@ -128,10 +136,23 @@ def _check_rate_limit(key: str, limit: int) -> bool:
     _rate_limit_store[full_key] = timestamps
     return True
 
-def check_search_rate_limit(user_id: str | None, request: Request):
-    """Check rate limit for search endpoint. Raises 429 if exceeded."""
-    if user_id:
-        key = f"user:{user_id}"
+def _get_user_tier(user_payload: dict | None) -> str:
+    """Extract tier from JWT metadata. Defaults to 'free'."""
+    if not user_payload:
+        return "anonymous"
+    metadata = user_payload.get("metadata", {})
+    return metadata.get("tier", "free")
+
+def check_search_rate_limit(user_payload: dict | None, request: Request):
+    """Check rate limit based on user tier. Raises 429 if exceeded."""
+    tier = _get_user_tier(user_payload)
+    
+    if tier == "pro":
+        key = f"user:{user_payload['sub']}"
+        limit = RATE_LIMIT_PRO
+        authenticated = True
+    elif user_payload:
+        key = f"user:{user_payload['sub']}"
         limit = RATE_LIMIT_AUTH
         authenticated = True
     else:
@@ -148,6 +169,7 @@ def check_search_rate_limit(user_id: str | None, request: Request):
                 "detail": "rate_limit",
                 "limit": limit,
                 "authenticated": authenticated,
+                "tier": tier,
             },
         )
     return None
@@ -288,9 +310,9 @@ def health_check():
 async def search(
     request_body: SearchRequest,
     request: Request,
-    user_id: str | None = Depends(get_current_user),
+    user_payload: dict | None = Depends(get_current_user),
 ):
-    rate_limit_response = check_search_rate_limit(user_id, request)
+    rate_limit_response = check_search_rate_limit(user_payload, request)
     if rate_limit_response:
         return rate_limit_response
     
@@ -341,10 +363,10 @@ async def search(
 async def ask(
     request_body: SearchRequest,
     request: Request,
-    user_id: str | None = Depends(get_current_user),
+    user_payload: dict | None = Depends(get_current_user),
 ):
     """RAG endpoint: search + AI-generated answer in one call."""
-    rate_limit_response = check_search_rate_limit(user_id, request)
+    rate_limit_response = check_search_rate_limit(user_payload, request)
     if rate_limit_response:
         return rate_limit_response
 
@@ -422,6 +444,116 @@ async def get_full_judgment(judgment_id: int):
                     "court_type": judgment_data.get("courtType", ""),
                 }
             raise HTTPException(status_code=404, detail="Judgment not found")
+        
+async def update_clerk_user_metadata(user_id: str, public_metadata: dict):
+    """Update a Clerk user's publicMetadata via the Clerk Backend API."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers={
+                "Authorization": f"Bearer {CLERK_SECRET_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={"public_metadata": public_metadata},
+        )
+        resp.raise_for_status()
+        
+class CheckoutRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+@app.post("/create-checkout-session")
+async def create_checkout_session(
+    body: CheckoutRequest,
+    request: Request,
+    user_payload: dict | None = Depends(get_current_user),
+):
+    """Create a Stripe Checkout Session for the Pro plan."""
+    if not user_payload:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    user_id = user_payload["sub"]
+    email = user_payload.get("email")
+    
+    # Check if user already has a Stripe customer ID in metadata
+    metadata = user_payload.get("metadata", {})
+    customer_id = metadata.get("stripeCustomerId")
+    
+    checkout_params = {
+        "mode": "payment",
+        "line_items": [{"price": STRIPE_PRICE_ID, "quantity": 1}],
+        "success_url": body.success_url,
+        "cancel_url": body.cancel_url,
+        "metadata": {"clerk_user_id": user_id},
+    }
+    
+    if customer_id:
+        checkout_params["customer"] = customer_id
+    else:
+        checkout_params["customer_email"] = email
+    
+    session = stripe.checkout.Session.create(**checkout_params)
+    return {"url": session.url}
+
+
+@app.post("/create-portal-session")
+async def create_portal_session(
+    request: Request,
+    user_payload: dict | None = Depends(get_current_user),
+):
+    """Create a Stripe Billing Portal session for managing subscriptions."""
+    if not user_payload:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    metadata = user_payload.get("metadata", {})
+    customer_id = metadata.get("stripeCustomerId")
+    
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="No active subscription")
+    
+    portal_session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=FRONTEND_URL,
+    )
+    return {"url": portal_session.url}
+
+
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Handle Stripe webhook events to sync payment status with Clerk."""
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    
+    print(f"📩 Webhook event: {event['type']}")
+    
+    if event["type"] == "checkout.session.completed":
+        session_data = event["data"]["object"]
+        clerk_user_id = session_data["metadata"].get("clerk_user_id")
+        customer_id = session_data.get("customer")
+        print(f"  clerk_user_id: {clerk_user_id}")
+        print(f"  customer_id: {customer_id}")
+        print(f"  CLERK_SECRET_KEY set: {CLERK_SECRET_KEY is not None}")
+        
+        if clerk_user_id:
+            try:
+                await update_clerk_user_metadata(clerk_user_id, {
+                    "tier": "pro",
+                    "stripeCustomerId": customer_id,
+                })
+                print(f"  ✅ Clerk metadata updated for {clerk_user_id}")
+            except Exception as e:
+                print(f"  ❌ Clerk update failed: {e}")
+    
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn

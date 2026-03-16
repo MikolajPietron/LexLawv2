@@ -111,3 +111,35 @@ export async function getFullJudgment(
   if (!res.ok) throw new Error('Failed to fetch judgment');
   return res.json();
 }
+export async function createCheckoutSession(
+  successUrl: string,
+  cancelUrl: string,
+  token: string
+): Promise<{ url: string }> {
+  const res = await fetch(`${API_URL}/create-checkout-session`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+    }),
+  });
+  if (!res.ok) throw new Error('Failed to create checkout session');
+  return res.json();
+}
+
+export async function createPortalSession(
+  token: string
+): Promise<{ url: string }> {
+  const res = await fetch(`${API_URL}/create-portal-session`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to create portal session');
+  return res.json();
+}

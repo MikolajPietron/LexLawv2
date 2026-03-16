@@ -6,6 +6,7 @@ import { SignInButton } from '@clerk/nextjs';
 import { askQuestion, getFullJudgment, AskResponse, FullJudgment, RateLimitError } from '../../lib/api';
 import ColorBends from '../components/ColorBends';
 import Orb from '../components/Orb';
+import Link from 'next/link';
 
 import BackgroundImg from '../../public/bgimg.jpg';
 import { GlassCard } from 'react-glass-ui';
@@ -167,21 +168,26 @@ export default function Home() {
 
             {/* Rate limit banner */}
             {rateLimitInfo && (
-              <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300">
-                {rateLimitInfo.authenticated ? (
-                  <p>Dzienny limit wyszukiwań ({rateLimitInfo.limit}) został wyczerpany. Spróbuj ponownie jutro.</p>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <p>Limit darmowych wyszukiwań wyczerpany. Zaloguj się, aby kontynuować.</p>
-                    <SignInButton>
-                      <button className="ml-4 flex-shrink-0 px-4 py-1.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 transition-all cursor-pointer">
-                        Zaloguj się
-                      </button>
-                    </SignInButton>
-                  </div>
-                )}
-              </div>
-            )}
+  <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300">
+    {rateLimitInfo.authenticated ? (
+      <div className="flex items-center justify-between">
+        <p>Dzienny limit wyszukiwań ({rateLimitInfo.limit}) został wyczerpany.</p>
+        <Link href="/pricing" className="ml-4 flex-shrink-0 px-4 py-1.5 rounded-lg bg-[#e05929] text-white text-sm font-medium hover:bg-[#c94d23] transition-all">
+          Upgrade to Pro
+        </Link>
+      </div>
+    ) : (
+      <div className="flex items-center justify-between">
+        <p>Limit darmowych wyszukiwań wyczerpany. Zaloguj się, aby kontynuować.</p>
+        <SignInButton>
+          <button className="ml-4 flex-shrink-0 px-4 py-1.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 transition-all cursor-pointer">
+            Zaloguj się
+          </button>
+        </SignInButton>
+      </div>
+    )}
+  </div>
+)}
 
             {/* Example queries — only before results */}
             {!hasResults && !rateLimitInfo && (
