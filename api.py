@@ -228,23 +228,24 @@ Zapytanie: {query}
 
 Zoptymalizowana fraza:"""
 
-RAG_RESPONSE_PROMPT = """Jesteś ekspertem prawniczym. Na podstawie wyników wyszukiwania z bazy orzeczeń sądowych, 
-przygotuj kompletną odpowiedź na pytanie użytkownika.
+RAG_RESPONSE_PROMPT = """Na podstawie WYŁĄCZNIE poniższych fragmentów orzeczeń sądowych, odpowiedz na pytanie użytkownika.
 
-ZASADY:
-1. Odpowiadaj TYLKO po polsku
-2. Cytuj sygnatury i daty orzeczeń
-3. Podsumuj kluczowe tezy z orzeczeń
-4. Jeśli wyniki są niewystarczające - powiedz o tym
-5. Odpowiedź powinna być profesjonalna i czytelna
-6. Maksymalnie 500 słów
+ŚCISŁE ZASADY:
+1. Odpowiadaj TYLKO po polsku.
+2. Korzystaj WYŁĄCZNIE z informacji zawartych w podanych fragmentach orzeczeń. NIE dodawaj wiedzy z zewnątrz.
+3. Każde twierdzenie MUSI być poparte konkretną sygnaturą orzeczenia z podanego kontekstu.
+4. Cytuj sygnatury i daty orzeczeń w formacie: (sygn. XXX, data).
+5. Jeśli podane fragmenty nie zawierają wystarczających informacji, aby odpowiedzieć na pytanie — napisz wprost: "Na podstawie znalezionych orzeczeń nie mogę udzielić pełnej odpowiedzi na to pytanie."
+6. NIE spekuluj, NIE uzupełniaj luk własną wiedzą, NIE podawaj informacji prawnych, których nie ma w kontekście.
+7. Podsumuj kluczowe tezy z orzeczeń — tylko te, które wynikają z podanych fragmentów.
+8. Odpowiedź powinna być profesjonalna i czytelna, maksymalnie 500 słów.
 
 Pytanie użytkownika: {query}
 
-Wyniki wyszukiwania:
+Fragmenty orzeczeń z bazy danych:
 {context}
 
-Twoja odpowiedź:"""
+Twoja odpowiedź (oparta WYŁĄCZNIE na powyższych fragmentach):"""
 
 def rewrite_query(query: str) -> str:
     try:
@@ -284,16 +285,22 @@ def generate_rag_response(query: str, results: list[SearchResult]) -> str:
             model="gpt-4o-mini",
             messages=[
                 {
-                    "role": "system",
-                    "content": "Jesteś ekspertem prawniczym. Odpowiadasz na pytania na podstawie orzeczeń sądowych. Odpowiadaj TYLKO po polsku."
-                },
+    "role": "system",
+    "content": (
+        "Jesteś asystentem prawniczym systemu wyszukiwania orzeczeń sądowych. "
+        "Odpowiadasz WYŁĄCZNIE na podstawie dostarczonych fragmentów orzeczeń. "
+        "NIGDY nie używasz własnej wiedzy prawniczej ani nie dodajesz informacji spoza podanego kontekstu. "
+        "Jeśli kontekst nie zawiera odpowiedzi — mówisz o tym wprost. "
+        "Każde twierdzenie popieras sygnaturą orzeczenia. Odpowiadasz TYLKO po polsku."
+    )
+},
                 {
                     "role": "user",
                     "content": RAG_RESPONSE_PROMPT.format(query=query, context=context)
                 }
             ],
             max_tokens=1000,
-            temperature=0.5
+            temperature=0.2
         )
         return response.choices[0].message.content.strip()
     except Exception as e:

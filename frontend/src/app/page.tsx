@@ -2,10 +2,10 @@
 
 import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/nextjs';
-import { SignInButton } from '@clerk/nextjs';
+import { useAuthModal } from '../components/AuthContext';
 import { askQuestion, getFullJudgment, AskResponse, FullJudgment, RateLimitError } from '../../lib/api';
-import ColorBends from '../components/ColorBends';
-import Orb from '../components/Orb';
+import SearchLoader from '../components/SearchLoader';
+
 import Link from 'next/link';
 
 import BackgroundImg from '../../public/bgimg.jpg';
@@ -51,8 +51,9 @@ export default function Home() {
   const [loadingJudgment, setLoadingJudgment] = useState(false);
   const [rateLimitInfo, setRateLimitInfo] = useState<RateLimitError | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { openSignIn } = useAuthModal();
   const { getToken } = useAuth();
-    const [answerExpanded, setAnswerExpanded] = useState(false);
+  const [answerExpanded, setAnswerExpanded] = useState(false);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,15 +105,15 @@ export default function Home() {
       <main className={`relative z-10 min-h-screen flex flex-col ${!hasResults ? 'items-center justify-center' : 'pt-[60px]'}`}>
         {/* Hero / Search Section */}
         <div className={`w-full transition-all duration-500 ${hasResults ? 'py-8' : 'py-0'}`}>
-          <div className={`mx-auto px-6 ${hasResults ? 'max-w-4xl' : 'max-w-4xl'}`}>
+          <div className={`mx-auto px-4 sm:px-6 max-w-4xl`}>
 
             {/* Hero text — only before results */}
             {!hasResults && (
               <div className="text-center mb-10">
-                <h1 className="text-5xl font-semibold text-white mb-6" style={{ fontFamily: "'Agrandir WideLight', sans-serif", letterSpacing: '0.1em' }}>
+                <h1 className="text-3xl sm:text-5xl font-semibold text-white mb-6" style={{ fontFamily: "'Agrandir WideLight', sans-serif", letterSpacing: '0.1em' }}>
                   Wyszukiwarka orzeczeń sądowych
                 </h1>
-                <p className="text-[#cbced4] text-base mb-24" style={{ fontFamily: "'Agrandir WideLight', sans-serif", letterSpacing: '0.1em' }}>
+                <p className="text-[#cbced4] text-sm sm:text-base mb-12 sm:mb-24" style={{ fontFamily: "'Agrandir WideLight', sans-serif", letterSpacing: '0.1em' }}>
                   Przeszukuj miliony polskich orzeczeń sądowych za pomocą AI.
                 </p>
               </div>
@@ -123,6 +124,7 @@ export default function Home() {
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }} suppressHydrationWarning>
                 <GlassCard
                   height={60}
+                  width={600}
                   blur={12}
                   brightness={90}
                   saturation={120}
@@ -140,7 +142,7 @@ export default function Home() {
                   contentCenter
                   itemsCenter
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '500px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%' }}>
                     <Search className="w-6 h-6 text-white flex-shrink-0" />
                     <input
                       ref={inputRef}
@@ -148,7 +150,7 @@ export default function Home() {
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="np. odszkodowanie za wypadek przy pracy..."
-                      className="flex-1 bg-transparent text-white text-m placeholder:text-white focus:outline-none"
+                      className="flex-1 bg-transparent text-white text-m placeholder:text-white focus:outline-none min-w-0"
                     />
                     <button
                       type="submit"
@@ -168,26 +170,27 @@ export default function Home() {
 
             {/* Rate limit banner */}
             {rateLimitInfo && (
-  <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300">
-    {rateLimitInfo.authenticated ? (
-      <div className="flex items-center justify-between">
-        <p>Dzienny limit wyszukiwań ({rateLimitInfo.limit}) został wyczerpany.</p>
-        <Link href="/pricing" className="ml-4 flex-shrink-0 px-4 py-1.5 rounded-lg bg-[#e05929] text-white text-sm font-medium hover:bg-[#c94d23] transition-all">
-          Upgrade to Pro
-        </Link>
-      </div>
-    ) : (
-      <div className="flex items-center justify-between">
-        <p>Limit darmowych wyszukiwań wyczerpany. Zaloguj się, aby kontynuować.</p>
-        <SignInButton>
-          <button className="ml-4 flex-shrink-0 px-4 py-1.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 transition-all cursor-pointer">
-            Zaloguj się
-          </button>
-        </SignInButton>
-      </div>
-    )}
-  </div>
-)}
+              <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300">
+                {rateLimitInfo.authenticated ? (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <p>Dzienny limit wyszukiwań ({rateLimitInfo.limit}) został wyczerpany.</p>
+                    <Link href="/pricing" className="flex-shrink-0 px-4 py-1.5 rounded-lg bg-[#e05929] text-white text-sm font-medium hover:bg-[#c94d23] transition-all">
+                      Upgrade to Pro
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <p>Limit darmowych wyszukiwań wyczerpany. Zaloguj się, aby kontynuować.</p>
+                    <button
+                      onClick={openSignIn}
+                      className="flex-shrink-0 px-4 py-1.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 transition-all cursor-pointer"
+                    >
+                      Zaloguj się
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Example queries — only before results */}
             {!hasResults && !rateLimitInfo && (
@@ -207,11 +210,13 @@ export default function Home() {
           </div>
         </div>
 
+        {loading && <SearchLoader />}
+
         {/* Results Section */}
         {hasResults && (
           <div className="flex-1 pb-12">
-            <div className="max-w-4xl mx-auto px-6">
-              <div className="flex items-center justify-between mb-6">
+            <div className="max-w-4xl mx-auto px-4 sm:px-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
                 <div>
                   <p className="text-sm uppercase tracking-widest text-neutral-500">
                     Znaleziono {results.results.length} orzeczeń
@@ -225,13 +230,13 @@ export default function Home() {
                 </div>
                 <button
                   onClick={() => setResults(null)}
-                  className="text-xs uppercase tracking-wider text-white hover:text-white transition-colors"
+                  className="text-xs uppercase tracking-wider text-white hover:text-white transition-colors self-start sm:self-auto"
                 >
                   Nowe wyszukiwanie
                 </button>
               </div>
 
-                            {/* AI Answer Card */}
+              {/* AI Answer Card */}
               {results.answer && (() => {
                 const paragraphs = results.answer.split('\n\n');
                 const firstParagraph = paragraphs[0];
@@ -239,7 +244,7 @@ export default function Home() {
 
                 return (
                   <div className="mb-6 rounded-xl bg-white/[0.04] backdrop-blur-md border border-white/[0.08] border-l-2 border-l-[#e05929] shadow-lg shadow-black/20">
-                    <div className="p-5">
+                    <div className="p-4 sm:p-5">
                       <div className="flex items-center gap-2 mb-3">
                         <BotMessageSquare className="w-4 h-4 text-[#e05929]" />
                         <h3 className="text-sm font-semibold text-white">Odpowiedź AI</h3>
@@ -294,9 +299,9 @@ export default function Home() {
                   return (
                     <div
                       key={i}
-                      className="p-5 rounded-xl bg-white/[0.04] backdrop-blur-md border border-white/[0.08] hover:border-white/[0.18] hover:bg-white/[0.06] shadow-lg shadow-black/20 transition-all duration-300"
+                      className="p-4 sm:p-5 rounded-xl bg-white/[0.04] backdrop-blur-md border border-white/[0.08] hover:border-white/[0.18] hover:bg-white/[0.06] shadow-lg shadow-black/20 transition-all duration-300"
                     >
-                      <div className="flex items-start justify-between gap-4 mb-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-4 mb-3">
                         <div>
                           <h4 className="text-sm font-semibold text-white mb-1.5">
                             {result.signature}
@@ -314,8 +319,8 @@ export default function Home() {
                             )}
                           </div>
                         </div>
-                        <div className="flex-shrink-0 w-16">
-                          <span className={`block text-xs font-medium tabular-nums text-right ${textColor}`}>
+                        <div className="flex-shrink-0 w-full sm:w-16">
+                          <span className={`block text-xs font-medium tabular-nums sm:text-right ${textColor}`}>
                             {pct}%
                           </span>
                           <div className="mt-1 h-1 w-full rounded-full bg-white/[0.08] overflow-hidden">
@@ -356,7 +361,8 @@ export default function Home() {
                       <button
                         onClick={() => handleShowFull(result.origin_id)}
                         disabled={loadingJudgment}
-className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-100 hover:text-white hover:underline underline-offset-4 transition-colors"                      >
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-100 hover:text-white hover:underline underline-offset-4 transition-colors"
+                      >
                         Pokaż pełną treść
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
@@ -371,13 +377,13 @@ className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-100
 
       {/* Modal */}
       {selectedJudgment && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center pb-4 sm:pb-6">
+        <div className="fixed inset-0 z-50 flex items-end justify-center px-2 pb-2 sm:pb-6">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm modal-overlay" 
             onClick={() => setSelectedJudgment(null)} 
           />
-          <div className="modal-panel relative w-full sm:max-w-5xl sm:mx-4 max-h-[calc(100vh-80px)] rounded-2xl bg-black/60 backdrop-blur-xl border border-white/[0.1] overflow-hidden flex flex-col shadow-2xl shadow-black/40">
+          <div className="modal-panel relative w-full sm:max-w-5xl sm:mx-4 max-h-[calc(100vh-40px)] sm:max-h-[calc(100vh-80px)] rounded-xl sm:rounded-2xl bg-black/60 backdrop-blur-xl border border-white/[0.1] overflow-hidden flex flex-col shadow-2xl shadow-black/40">
             <div className="modal-header flex-shrink-0 sticky top-0 bg-black/40 backdrop-blur-xl border-b border-white/[0.08]">
-              <div className="flex items-start justify-between p-6">
+              <div className="flex items-start justify-between p-4 sm:p-6">
                 <div>
                   <h2 className="text-base font-semibold text-white">{selectedJudgment.signature}</h2>
                   <p className="text-xs text-neutral-500 mt-1.5 flex items-center gap-2">
@@ -395,7 +401,7 @@ className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-100
                 </button>
               </div>
             </div>
-            <div className="modal-body flex-1 overflow-y-auto p-6">
+            <div className="modal-body flex-1 overflow-y-auto p-4 sm:p-6">
               <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap">
                 {selectedJudgment.text}
               </p>

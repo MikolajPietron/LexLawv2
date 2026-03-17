@@ -5,7 +5,8 @@ import Link from 'next/link'
 
 const Footer = () => {
   return (
-    <footer className='bg-black/90 backdrop-blur-md border-t border-white/[0.06]'>
+    /* Add id="contact" here */
+    <footer id="contact" className='bg-black/90 backdrop-blur-md border-t border-white/[0.06]'>
       <div className='max-w-7xl mx-auto px-8 py-10'>
         <div className='flex flex-col md:flex-row items-start justify-between gap-10'>
 
@@ -21,10 +22,9 @@ const Footer = () => {
           <div className='flex flex-col gap-3'>
             <h4 className='text-xs font-semibold uppercase tracking-widest text-neutral-500'>Nawigacja</h4>
             <nav className='flex flex-col gap-2'>
-              <Link href="/home" className='text-sm text-neutral-400 hover:text-white transition-colors'>Home</Link>
+              <Link href="/" className='text-sm text-neutral-400 hover:text-white transition-colors'>Home</Link>
               <Link href="/about" className='text-sm text-neutral-400 hover:text-white transition-colors'>About</Link>
-              <Link href="/contact" className='text-sm text-neutral-400 hover:text-white transition-colors'>Contact</Link>
-              <Link href="/home" className='text-sm text-neutral-400 hover:text-white transition-colors'>Pricing</Link>
+              <Link href="/pricing" className='text-sm text-neutral-400 hover:text-white transition-colors'>Pricing</Link>
             </nav>
           </div>
 
@@ -32,15 +32,15 @@ const Footer = () => {
           <div className='flex flex-col gap-3'>
             <h4 className='text-xs font-semibold uppercase tracking-widest text-neutral-500'>Informacje</h4>
             <nav className='flex flex-col gap-2'>
-              <Link href="/privacy" className='text-sm text-neutral-400 hover:text-white transition-colors'>Polityka prywatności</Link>
-              <Link href="/terms" className='text-sm text-neutral-400 hover:text-white transition-colors'>Regulamin</Link>
+              <Link href="#" className='text-sm text-neutral-400 hover:text-white transition-colors'>Polityka prywatności</Link>
+              <Link href="#" className='text-sm text-neutral-400 hover:text-white transition-colors'>Regulamin</Link>
             </nav>
           </div>
 
           {/* Contact / CTA */}
           <div className='flex flex-col gap-3'>
             <h4 className='text-xs font-semibold uppercase tracking-widest text-neutral-500'>Kontakt</h4>
-            <a href="mailto:kontakt@example.com" className='text-sm text-neutral-400 hover:text-white transition-colors'>kontakt@example.com</a>
+            <a href="mailto:pietron.mikolaj@gmail.com" className='text-sm text-neutral-400 hover:text-white transition-colors'>pietron.mikolaj@gmail.com</a>
             <Link href="/contact" className='text-sm bg-[#e05929] text-white px-4 py-1.5 rounded-lg font-medium hover:text-black duration-500 hover:bg-neutral-200 transition-colors text-center mt-1'>
               Napisz do nas
             </Link>
