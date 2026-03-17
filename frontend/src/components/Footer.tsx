@@ -41,9 +41,9 @@ const Footer = () => {
           <div className='flex flex-col gap-3'>
             <h4 className='text-xs font-semibold uppercase tracking-widest text-neutral-500'>Kontakt</h4>
             <a href="mailto:pietron.mikolaj@gmail.com" className='text-sm text-neutral-400 hover:text-white transition-colors'>pietron.mikolaj@gmail.com</a>
-            <Link href="/contact" className='text-sm bg-[#e05929] text-white px-4 py-1.5 rounded-lg font-medium hover:text-black duration-500 hover:bg-neutral-200 transition-colors text-center mt-1'>
+            <a href="mailto:pietron.mikolaj@gmail.com" className='text-sm bg-[#e05929] text-white px-4 py-1.5 rounded-lg font-medium hover:text-black duration-500 hover:bg-neutral-200 transition-colors text-center mt-1'>
               Napisz do nas
-            </Link>
+            </a>
           </div>
 
         </div>
